@@ -6,9 +6,39 @@
 
     <groupId>ai.h2o</groupId>
     <artifactId>xgboost-jvm_2.12</artifactId>
-    <version>1.2.0</version>
+    <version>1.3.3</version>
     <packaging>pom</packaging>
     <name>XGBoost JVM Package</name>
+    <description>H2O XGBoost Libraries</description>
+    <url>https://github.com/h2oai/xgboost</url>
+    <inceptionYear>2013</inceptionYear>
+    <organization>
+      <name>H2O.ai</name>
+      <url>http://h2o.ai/</url>
+    </organization>
+    <licenses>
+      <license>
+        <name>The Apache License, Version 2.0</name>
+        <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+        <distribution>repo</distribution>
+      </license>
+    </licenses>
+    <developers>
+      <developer>
+        <id>oss</id>
+        <name>Open Source Google Group</name>
+        <email>https://groups.google.com/forum/#!forum/h2ostream</email>
+      </developer>
+    </developers>
+    <scm>
+      <url>https://github.com/h2oai/xgboost</url>
+      <connection>scm:git:https://github.com/h2oai/xgboost.git</connection>
+      <developerConnection>scm:git:git@github.com:h2oai/xgboost.git</developerConnection>
+    </scm>
+    <issueManagement>
+      <system>Jira</system>
+      <url>http://jira.h2o.ai</url>
+    </issueManagement>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -19,6 +49,7 @@
         <scala.version>2.12.8</scala.version>
         <scala.binary.version>2.12</scala.binary.version>
         <hadoop.version>2.7.3</hadoop.version>
+        <maven.wagon.http.retryHandler.count>5</maven.wagon.http.retryHandler.count>
         <log.capi.invocation>OFF</log.capi.invocation>
         <use.cuda>OFF</use.cuda>
     </properties>
@@ -30,46 +61,8 @@
         </repository>
     </repositories>
     <modules>
-        <module>xgboost4j</module>
-        <module>xgboost4j-example</module>
-        <module>xgboost4j-spark</module>
-        <module>xgboost4j-flink</module>
     </modules>
 
-    <description>H2O XGBoost Libraries</description>
-    <url>https://github.com/h2oai/xgboost</url>
-    <inceptionYear>2013</inceptionYear>
-    <organization>
-        <name>H2O.ai</name>
-        <url>http://h2o.ai/</url>
-    </organization>
-
-    <licenses>
-        <license>
-            <name>The Apache Software License, Version 2.0</name>
-            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
-            <distribution>repo</distribution>
-        </license>
-    </licenses>
-
-    <scm>
-        <url>https://github.com/h2oai/xgboost</url>
-        <connection>scm:git:https://github.com/h2oai/xgboost.git</connection>
-        <developerConnection>scm:git:git@github.com:h2oai/xgboost.git</developerConnection>
-    </scm>
-
-    <developers>
-        <developer>
-            <id>oss</id>
-            <name>Open Source Google Group</name>
-            <email>https://groups.google.com/forum/#!forum/h2ostream</email>
-        </developer>
-    </developers>
-
-    <issueManagement>
-        <system>Jira</system>
-        <url>http://jira.h2o.ai</url>
-    </issueManagement>
     <profiles>
         <profile>
             <id>local-nexus-snapshot</id>
@@ -123,23 +116,17 @@
             </distributionManagement>
         </profile>
         <profile>
-            <id>spark-2.x</id>
-            <activation>
-                <activeByDefault>true</activeByDefault>
-            </activation>
-            <!--<properties>-->
-            <!--<flink.version>0.10.2</flink.version> -->
-            <!--<spark.version>2.0.1</spark.version>-->
-            <!--<scala.version>2.11.8</scala.version>-->
-            <!--<scala.binary.version>2.11</scala.binary.version>-->
-            <!--</properties>-->
-        </profile>
-        <profile>
             <!-- default active profile excluding gpu related test suites -->
             <id>default</id>
             <activation>
                 <activeByDefault>true</activeByDefault>
             </activation>
+            <modules>
+                <module>xgboost4j</module>
+                <module>xgboost4j-example</module>
+                <module>xgboost4j-spark</module>
+                <module>xgboost4j-flink</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -162,6 +149,10 @@
                     <value>ON</value>
                 </property>
             </activation>
+            <modules>
+                <module>xgboost4j-gpu</module>
+                <module>xgboost4j-spark-gpu</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -178,6 +169,10 @@
             <properties>
                 <use.cuda>ON</use.cuda>
             </properties>
+            <modules>
+                <module>xgboost4j-gpu</module>
+                <module>xgboost4j-spark-gpu</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -193,6 +188,14 @@
 
         <profile>
             <id>release</id>
+            <modules>
+                <module>xgboost4j</module>
+                <module>xgboost4j-example</module>
+                <module>xgboost4j-spark</module>
+                <module>xgboost4j-flink</module>
+                <module>xgboost4j-gpu</module>
+                <module>xgboost4j-spark-gpu</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -262,6 +265,13 @@
                             <autoReleaseAfterClose>false</autoReleaseAfterClose>
                         </configuration>
                     </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <skipTests>true</skipTests>
+                        </configuration>
+                    </plugin>
                 </plugins>
             </build>
         </profile>
@@ -304,6 +314,14 @@
             <properties>
                 <github.global.server>github</github.global.server>
             </properties>
+            <modules>
+                <module>xgboost4j</module>
+                <module>xgboost4j-example</module>
+                <module>xgboost4j-spark</module>
+                <module>xgboost4j-flink</module>
+                <module>xgboost4j-gpu</module>
+                <module>xgboost4j-spark-gpu</module>
+            </modules>
             <build>
                 <plugins>
                     <plugin>
@@ -340,6 +358,13 @@
                             <altDeploymentRepository>internal.repo::default::file://${project.build.directory}/mvn-repo</altDeploymentRepository>
                         </configuration>
                     </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <skipTests>true</skipTests>
+                        </configuration>
+                    </plugin>
                 </plugins>
             </build>
         </profile>
@@ -365,6 +390,25 @@
                     <url>https://s3.amazonaws.com/xgboost-maven-repo/release</url>
                 </repository>
             </repositories>
+            <modules>
+                <module>xgboost4j</module>
+                <module>xgboost4j-example</module>
+                <module>xgboost4j-spark</module>
+                <module>xgboost4j-flink</module>
+                <module>xgboost4j-gpu</module>
+                <module>xgboost4j-spark-gpu</module>
+            </modules>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <skipTests>true</skipTests>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
     <distributionManagement>

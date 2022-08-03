@@ -70,6 +70,11 @@ def normpath(path):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--log-capi-invocation', type=str, choices=['ON', 'OFF'], default='OFF')
+    parser.add_argument('--use-cuda', type=str, choices=['ON', 'OFF'], default='OFF')
+    cli_args = parser.parse_args()
+
     if sys.platform == "darwin":
         # Enable of your compiler supports OpenMP.
         CONFIG["USE_OPENMP"] = "OFF"
@@ -87,10 +92,6 @@ if __name__ == "__main__":
 
     if not os.path.exists(library_path):
         print("building Java wrapper")
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--log-capi-invocation', type=str, choices=['ON', 'OFF'], default='OFF')
-        parser.add_argument('--use-cuda', type=str, choices=['ON', 'OFF'], default='OFF')
-        cli_args = parser.parse_args()
         with cd(".."):
             maybe_makedirs("build")
             with cd("build"):
@@ -125,31 +126,34 @@ if __name__ == "__main__":
                 run("cmake .. " + " ".join(args) + maybe_generator)
                 run("cmake --build . --config Release" + maybe_parallel_build)
 
-            with cd("demo/regression"):
+            with cd("demo/CLI/regression"):
                 run(sys.executable + " mapfeat.py")
                 run(sys.executable + " mknfold.py machine.txt 1")
     else:
         print("found existing library '{}' in '{}'".format(library_name, library_path))
 
+    xgboost4j = 'xgboost4j-gpu' if cli_args.use_cuda == 'ON' else 'xgboost4j'
+    xgboost4j_spark = 'xgboost4j-spark-gpu' if cli_args.use_cuda == 'ON' else 'xgboost4j-spark'
+
     print("copying native library " + library_path)
-    maybe_makedirs("xgboost4j/src/main/resources/lib")
-    cp(library_path, "xgboost4j/src/main/resources/lib")
+    maybe_makedirs("{}/src/main/resources/lib".format(xgboost4j))
+    cp(library_path, "{}/src/main/resources/lib".format(xgboost4j))
 
     print("copying pure-Python tracker")
     cp("../dmlc-core/tracker/dmlc_tracker/tracker.py",
-       "xgboost4j/src/main/resources")
+       "{}/src/main/resources".format(xgboost4j))
 
     print("copying train/test files")
-    maybe_makedirs("xgboost4j-spark/src/test/resources")
-    with cd("../demo/regression"):
+    maybe_makedirs("{}/src/test/resources".format(xgboost4j_spark))
+    with cd("../demo/CLI/regression"):
         run("{} mapfeat.py".format(sys.executable))
         run("{} mknfold.py machine.txt 1".format(sys.executable))
 
-    for file in glob.glob("../demo/regression/machine.txt.t*"):
-        cp(file, "xgboost4j-spark/src/test/resources")
+    for file in glob.glob("../demo/CLI/regression/machine.txt.t*"):
+        cp(file, "{}/src/test/resources".format(xgboost4j_spark))
     for file in glob.glob("../demo/data/agaricus.*"):
-        cp(file, "xgboost4j-spark/src/test/resources")
+        cp(file, "{}/src/test/resources".format(xgboost4j_spark))
 
-    maybe_makedirs("xgboost4j/src/test/resources")
+    maybe_makedirs("{}/src/test/resources".format(xgboost4j))
     for file in glob.glob("../demo/data/agaricus.*"):
-        cp(file, "xgboost4j/src/test/resources")
+        cp(file, "{}/src/test/resources".format(xgboost4j))
