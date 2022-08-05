@@ -62,6 +62,8 @@ def test_multiclass_classification():
     kf = KFold(n_splits=2, shuffle=True, random_state=rng)
     for train_index, test_index in kf.split(X, y):
         xgb_model = xgb.XGBClassifier().fit(X[train_index], y[train_index])
+        assert (xgb_model.get_booster().num_boosted_rounds() ==
+                xgb_model.n_estimators)
         preds = xgb_model.predict(X[test_index])
         # test other params in XGBClassifier().fit
         preds2 = xgb_model.predict(X[test_index], output_margin=True,
@@ -76,6 +78,46 @@ def test_multiclass_classification():
         check_pred(preds2, labels, output_margin=True)
         check_pred(preds3, labels, output_margin=True)
         check_pred(preds4, labels, output_margin=False)
+
+    cls = xgb.XGBClassifier(n_estimators=4).fit(X, y)
+    assert cls.n_classes_ == 3
+    proba = cls.predict_proba(X)
+    assert proba.shape[0] == X.shape[0]
+    assert proba.shape[1] == cls.n_classes_
+
+    # custom objective, the default is multi:softprob so no transformation is required.
+    cls = xgb.XGBClassifier(n_estimators=4, objective=tm.softprob_obj(3)).fit(X, y)
+    proba = cls.predict_proba(X)
+    assert proba.shape[0] == X.shape[0]
+    assert proba.shape[1] == cls.n_classes_
+
+
+def test_best_ntree_limit():
+    from sklearn.datasets import load_iris
+
+    X, y = load_iris(return_X_y=True)
+
+    def train(booster, forest):
+        rounds = 4
+        cls = xgb.XGBClassifier(
+            n_estimators=rounds, num_parallel_tree=forest, booster=booster
+        ).fit(
+            X, y, eval_set=[(X, y)], early_stopping_rounds=3
+        )
+
+        if forest:
+            assert cls.best_ntree_limit == rounds * forest
+        else:
+            assert cls.best_ntree_limit == 0
+
+        # best_ntree_limit is used by default, assert that under gblinear it's
+        # automatically ignored due to being 0.
+        cls.predict(X)
+
+    num_parallel_tree = 4
+    train('gbtree', num_parallel_tree)
+    train('dart', num_parallel_tree)
+    train('gblinear', None)
 
 
 def test_best_ntree_limit():
@@ -111,9 +153,11 @@ def test_ranking():
     x_train = np.random.rand(1000, 10)
     y_train = np.random.randint(5, size=1000)
     train_group = np.repeat(50, 20)
+
     x_valid = np.random.rand(200, 10)
     y_valid = np.random.randint(5, size=200)
     valid_group = np.repeat(50, 4)
+
     x_test = np.random.rand(100, 10)
 
     params = {'tree_method': 'exact', 'objective': 'rank:pairwise',
@@ -236,7 +280,9 @@ def test_feature_importances_gain():
     xgb_model = xgb.XGBClassifier(
         random_state=0, tree_method="exact",
         learning_rate=0.1,
-        importance_type="gain").fit(X, y)
+        importance_type="gain",
+        use_label_encoder=False,
+    ).fit(X, y)
 
     exp = np.array([0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
                     0.00326159, 0., 0., 0., 0., 0., 0., 0., 0.,
@@ -254,16 +300,29 @@ def test_feature_importances_gain():
     y = pd.Series(digits['target'])
     X = pd.DataFrame(digits['data'])
     xgb_model = xgb.XGBClassifier(
-        random_state=0, tree_method="exact",
+        random_state=0,
+        tree_method="exact",
         learning_rate=0.1,
-        importance_type="gain").fit(X, y)
+        importance_type="gain",
+        use_label_encoder=False,
+    ).fit(X, y)
     np.testing.assert_almost_equal(xgb_model.feature_importances_, exp)
 
     xgb_model = xgb.XGBClassifier(
-        random_state=0, tree_method="exact",
+        random_state=0,
+        tree_method="exact",
         learning_rate=0.1,
-        importance_type="gain").fit(X, y)
+        importance_type="gain",
+        use_label_encoder=False,
+    ).fit(X, y)
     np.testing.assert_almost_equal(xgb_model.feature_importances_, exp)
+
+    # no split can be found
+    cls = xgb.XGBClassifier(
+        min_child_weight=1000, tree_method="hist", n_estimators=1, use_label_encoder=False
+    )
+    cls.fit(X, y)
+    assert np.all(cls.feature_importances_ == 0)
 
 
 def test_select_feature():
@@ -326,21 +385,24 @@ def test_boston_housing_regression():
         assert mean_squared_error(preds4, labels) < 350
 
 
-def test_boston_housing_rf_regression():
+def run_boston_housing_rf_regression(tree_method):
     from sklearn.metrics import mean_squared_error
     from sklearn.datasets import load_boston
     from sklearn.model_selection import KFold
 
-    boston = load_boston()
-    y = boston['target']
-    X = boston['data']
+    X, y = load_boston(return_X_y=True)
     kf = KFold(n_splits=2, shuffle=True, random_state=rng)
     for train_index, test_index in kf.split(X, y):
-        xgb_model = xgb.XGBRFRegressor(random_state=42).fit(
-            X[train_index], y[train_index])
+        xgb_model = xgb.XGBRFRegressor(random_state=42, tree_method=tree_method).fit(
+            X[train_index], y[train_index]
+        )
         preds = xgb_model.predict(X[test_index])
         labels = y[test_index]
         assert mean_squared_error(preds, labels) < 35
+
+
+def test_boston_housing_rf_regression():
+    run_boston_housing_rf_regression("hist")
 
 
 def test_parameter_tuning():
@@ -701,13 +763,13 @@ def test_validation_weights_xgbmodel():
     assert all((logloss_with_weights[i] != logloss_without_weights[i]
                 for i in [0, 1]))
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         # length of eval set and sample weight doesn't match.
         clf.fit(X_train, y_train, sample_weight=weights_train,
                 eval_set=[(X_train, y_train), (X_test, y_test)],
                 sample_weight_eval_set=[weights_train])
 
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         cls = xgb.XGBClassifier()
         cls.fit(X_train, y_train, sample_weight=weights_train,
                 eval_set=[(X_train, y_train), (X_test, y_test)],
@@ -816,6 +878,11 @@ def test_save_load_model():
         booster.save_model(model_path)
         cls = xgb.XGBClassifier()
         cls.load_model(model_path)
+
+        proba = cls.predict_proba(X)
+        assert proba.shape[0] == X.shape[0]
+        assert proba.shape[1] == 2  # binary
+
         predt_1 = cls.predict_proba(X)[:, 1]
         assert np.allclose(predt_0, predt_1)
 
@@ -1014,21 +1081,10 @@ def test_pandas_input():
                                np.array([0, 1]))
 
 
-def run_feature_weights(increasing):
+def run_feature_weights(X, y, fw, model=xgb.XGBRegressor):
     with TemporaryDirectory() as tmpdir:
-        kRows = 512
-        kCols = 64
         colsample_bynode = 0.5
-        reg = xgb.XGBRegressor(tree_method='hist',
-                               colsample_bynode=colsample_bynode)
-        X = rng.randn(kRows, kCols)
-        y = rng.randn(kRows)
-        fw = np.ones(shape=(kCols,))
-        for i in range(kCols):
-            if increasing:
-                fw[i] *= float(i)
-            else:
-                fw[i] *= float(kCols - i)
+        reg = model(tree_method='hist', colsample_bynode=colsample_bynode)
 
         reg.fit(X, y, feature_weights=fw)
         model_path = os.path.join(tmpdir, 'model.json')
@@ -1064,8 +1120,21 @@ def run_feature_weights(increasing):
 
 
 def test_feature_weights():
-    poly_increasing = run_feature_weights(True)
-    poly_decreasing = run_feature_weights(False)
+    kRows = 512
+    kCols = 64
+    X = rng.randn(kRows, kCols)
+    y = rng.randn(kRows)
+
+    fw = np.ones(shape=(kCols,))
+    for i in range(kCols):
+        fw[i] *= float(i)
+    poly_increasing = run_feature_weights(X, y, fw, xgb.XGBRegressor)
+
+    fw = np.ones(shape=(kCols,))
+    for i in range(kCols):
+        fw[i] *= float(kCols - i)
+    poly_decreasing = run_feature_weights(X, y, fw, xgb.XGBRegressor)
+
     # Approxmated test, this is dependent on the implementation of random
     # number generator in std library.
     assert poly_increasing[0] > 0.08
@@ -1095,16 +1164,58 @@ def run_boost_from_prediction(tree_method):
     assert np.all(predictions_1 == predictions_2)
 
 
-@pytest.mark.skipif(**tm.no_sklearn())
-def test_boost_from_prediction_hist():
-    run_boost_from_prediction('hist')
+@pytest.mark.parametrize("tree_method", ["hist", "approx", "exact"])
+def test_boost_from_prediction(tree_method):
+    run_boost_from_prediction(tree_method)
 
 
-@pytest.mark.skipif(**tm.no_sklearn())
-def test_boost_from_prediction_approx():
-    run_boost_from_prediction('approx')
+def test_estimator_type():
+    assert xgb.XGBClassifier._estimator_type == "classifier"
+    assert xgb.XGBRFClassifier._estimator_type == "classifier"
+    assert xgb.XGBRegressor._estimator_type == "regressor"
+    assert xgb.XGBRFRegressor._estimator_type == "regressor"
+    assert xgb.XGBRanker._estimator_type == "ranker"
+
+    from sklearn.datasets import load_digits
+
+    X, y = load_digits(n_class=2, return_X_y=True)
+    cls = xgb.XGBClassifier(n_estimators=2).fit(X, y)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "cls.json")
+        cls.save_model(path)
+
+        reg = xgb.XGBRegressor()
+        with pytest.raises(TypeError):
+            reg.load_model(path)
+
+        cls = xgb.XGBClassifier()
+        cls.load_model(path)  # no error
 
 
-@pytest.mark.skipif(**tm.no_sklearn())
-def test_boost_from_prediction_exact():
-    run_boost_from_prediction('exact')
+def run_data_initialization(DMatrix, model, X, y):
+    """Assert that we don't create duplicated DMatrix."""
+
+    old_init = DMatrix.__init__
+    count = [0]
+
+    def new_init(self, **kwargs):
+        count[0] += 1
+        return old_init(self, **kwargs)
+
+    DMatrix.__init__ = new_init
+    model(n_estimators=1).fit(X, y, eval_set=[(X, y)])
+
+    assert count[0] == 1
+    count[0] = 0                # only 1 DMatrix is created.
+
+    y_copy = y.copy()
+    model(n_estimators=1).fit(X, y, eval_set=[(X, y_copy)])
+    assert count[0] == 2        # a different Python object is considered different
+
+    DMatrix.__init__ = old_init
+
+
+def test_data_initialization():
+    from sklearn.datasets import load_digits
+    X, y = load_digits(return_X_y=True)
+    run_data_initialization(xgb.DMatrix, xgb.XGBClassifier, X, y)

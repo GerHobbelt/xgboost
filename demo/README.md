@@ -110,6 +110,7 @@ Please send pull requests if you find ones that are missing here.
 
 ## Tutorials
 
+- [XGBoost Training with Dask, using Saturn Cloud](https://www.saturncloud.io/docs/tutorials/xgboost/)
 - [Machine Learning with XGBoost on Qubole Spark Cluster](https://www.qubole.com/blog/machine-learning-xgboost-qubole-spark-cluster/)
 - [XGBoost Official RMarkdown Tutorials](https://xgboost.readthedocs.org/en/latest/R-package/index.html#tutorials)
 - [An Introduction to XGBoost R Package](http://dmlc.ml/rstats/2016/03/10/xgboost.html) by Tong He
@@ -144,6 +145,8 @@ Send a PR to add a one sentence description:)
 ## Tools using XGBoost
 
 - [BayesBoost](https://github.com/mpearmain/BayesBoost) - Bayesian Optimization using xgboost and sklearn API
+- [FLAML](https://github.com/microsoft/FLAML) - An open source AutoML library 
+designed to automatically produce accurate machine learning models with low computational cost. FLAML includes [XGBoost as one of the default learners](https://github.com/microsoft/FLAML/blob/main/flaml/model.py) and can also be used as a fast hyperparameter tuning tool for XGBoost ([code example](https://github.com/microsoft/FLAML/blob/main/notebook/flaml_xgboost.ipynb)).
 - [gp_xgboost_gridsearch](https://github.com/vatsan/gp_xgboost_gridsearch) - In-database parallel grid-search for XGBoost on [Greenplum](https://github.com/greenplum-db/gpdb) using PL/Python
 - [tpot](https://github.com/rhiever/tpot) - A Python tool that automatically creates and optimizes machine learning pipelines using genetic programming.
 

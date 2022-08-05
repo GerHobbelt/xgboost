@@ -149,7 +149,7 @@ private[this] class XGBoostExecutionParamsFactory(rawParams: Map[String, Any], s
     overridedParams += "num_early_stopping_rounds" -> numEarlyStoppingRounds
     if (numEarlyStoppingRounds > 0 &&
       !overridedParams.contains("maximize_evaluation_metrics")) {
-      if (overridedParams.contains("custom_eval")) {
+      if (overridedParams.getOrElse("custom_eval", null) != null) {
         throw new IllegalArgumentException("custom_eval does not support early stopping")
       }
       val eval_metric = overridedParams("eval_metric").toString
@@ -626,8 +626,12 @@ object XGBoost extends Serializable {
           }
         }
         sparkJobThread.setUncaughtExceptionHandler(tracker)
-        sparkJobThread.start()
-        val trackerReturnVal = parallelismTracker.execute(tracker.waitFor(0L))
+
+        val trackerReturnVal = parallelismTracker.execute {
+          sparkJobThread.start()
+          tracker.waitFor(0L)
+        }
+
         logger.info(s"Rabit returns with exit code $trackerReturnVal")
         val (booster, metrics) = postTrackerReturnProcessing(trackerReturnVal,
           boostersAndMetrics, sparkJobThread)

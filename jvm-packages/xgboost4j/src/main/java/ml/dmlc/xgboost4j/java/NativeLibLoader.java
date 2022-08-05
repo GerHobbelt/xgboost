@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014, 2021 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package ml.dmlc.xgboost4j.java;
 
 import java.io.*;
 import java.lang.reflect.Field;
+import java.util.Locale;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -32,7 +33,7 @@ public class NativeLibLoader {
   private static boolean initialized = false;
   private static INativeLibLoader loader = null;
   private static final String nativePath = "../../lib/";
-  private static final String nativeResourcePath = "/lib/";
+  private static final String nativeResourcePath = "/lib";
   private static final String[] libNames = new String[]{"xgboost4j"};
 
   public static synchronized void initXGBoost() throws IOException {
@@ -78,16 +79,56 @@ public class NativeLibLoader {
     }
     @Override
     public void loadNativeLibs() throws IOException {
+      String platform = computePlatformArchitecture();
       for (String libName : libNames) {
         try {
-          String libraryFromJar = nativeResourcePath + System.mapLibraryName(libName);
-          loadLibraryFromJar(libraryFromJar);
+          String libraryPathInJar = nativeResourcePath + "/" +
+              platform + "/" + System.mapLibraryName(libName);
+          loadLibraryFromJar(libraryPathInJar);
         } catch (IOException ioe) {
-          logger.error("failed to load " + libName + " library from jar");
+          logger.error("failed to load " + libName + " library from jar for platform " + platform);
           throw ioe;
         }
       }
     }
+  }
+
+  /**
+   * Computes a String representing the path to look for.
+   * Assumes the libraries are stored in the jar in os/architecture folders.
+   * <p>
+   * Throws IllegalStateException if the architecture or OS is unsupported.
+   * Supported OS: macOS, Windows, Linux, Solaris.
+   * Supported Architectures: x86_64, aarch64, sparc.
+   * @return The platform & architecture path.
+   */
+  private static String computePlatformArchitecture() {
+    String detectedOS;
+    String os = System.getProperty("os.name", "generic").toLowerCase(Locale.ENGLISH);
+    if (os.contains("mac") || os.contains("darwin")) {
+      detectedOS = "macos";
+    } else if (os.contains("win")) {
+      detectedOS = "windows";
+    } else if (os.contains("nux")) {
+      detectedOS = "linux";
+    } else if (os.contains("sunos")) {
+      detectedOS = "solaris";
+    } else {
+      throw new IllegalStateException("Unsupported os:" + os);
+    }
+    String detectedArch;
+    String arch = System.getProperty("os.arch", "generic").toLowerCase(Locale.ENGLISH);
+    if (arch.startsWith("amd64") || arch.startsWith("x86_64")) {
+      detectedArch = "x86_64";
+    } else if (arch.startsWith("aarch64") || arch.startsWith("arm64")) {
+      detectedArch = "aarch64";
+    } else if (arch.startsWith("sparc")) {
+      detectedArch = "sparc";
+    } else {
+      throw new IllegalStateException("Unsupported architecture:" + arch);
+    }
+
+    return detectedOS + "/" + detectedArch;
   }
 
   /**
@@ -107,9 +148,8 @@ public class NativeLibLoader {
    * @throws IllegalArgumentException If the path is not absolute or if the filename is shorter than
    * three characters
    */
-  private static void loadLibraryFromJar(String path) throws IOException, IllegalArgumentException{
+  private static void loadLibraryFromJar(String path) throws IOException, IllegalArgumentException {
     String temp = createTempFileFromResource(path);
-    // Finally, load the library
     System.load(temp);
   }
 
@@ -124,8 +164,8 @@ public class NativeLibLoader {
    * {@code path}.
    * @param path Path to the resources in the jar
    * @return The created temp file.
-   * @throws IOException
-   * @throws IllegalArgumentException
+   * @throws IOException If it failed to read the file.
+   * @throws IllegalArgumentException If the filename is invalid.
    */
   static String createTempFileFromResource(String path) throws
           IOException, IllegalArgumentException {
@@ -137,7 +177,7 @@ public class NativeLibLoader {
     String[] parts = path.split("/");
     String filename = (parts.length > 1) ? parts[parts.length - 1] : null;
 
-    // Split filename to prexif and suffix (extension)
+    // Split filename to prefix and suffix (extension)
     String prefix = "";
     String suffix = null;
     if (filename != null) {
@@ -163,22 +203,18 @@ public class NativeLibLoader {
     int readBytes;
 
     // Open and check input stream
-    InputStream is = NativeLibLoader.class.getResourceAsStream(path);
-    if (is == null) {
-      throw new FileNotFoundException("File " + path + " was not found inside JAR.");
-    }
+    try (InputStream is = NativeLibLoader.class.getResourceAsStream(path);
+         OutputStream os = new FileOutputStream(temp)) {
+      if (is == null) {
+        throw new FileNotFoundException("File " + path + " was not found inside JAR.");
+      }
 
-    // Open output stream and copy data between source file in JAR and the temporary file
-    OutputStream os = new FileOutputStream(temp);
-    try {
+      // Open output stream and copy data between source file in JAR and the temporary file
       while ((readBytes = is.read(buffer)) != -1) {
         os.write(buffer, 0, readBytes);
       }
-    } finally {
-      // If read/write fails, close streams safely before throwing an exception
-      os.close();
-      is.close();
     }
+
     return temp.getAbsolutePath();
   }
 

@@ -124,6 +124,20 @@ class TestModels:
         predt_2 = bst.predict(dtrain)
         assert np.all(np.abs(predt_2 - predt_1) < 1e-6)
 
+    def test_boost_from_existing_model(self):
+        X = xgb.DMatrix(dpath + 'agaricus.txt.train')
+        booster = xgb.train({'tree_method': 'hist'}, X, num_boost_round=4)
+        assert booster.num_boosted_rounds() == 4
+        booster = xgb.train({'tree_method': 'hist'}, X, num_boost_round=4,
+                            xgb_model=booster)
+        assert booster.num_boosted_rounds() == 8
+        booster = xgb.train({'updater': 'prune', 'process_type': 'update'}, X,
+                            num_boost_round=4, xgb_model=booster)
+        # Trees are moved for update, the rounds is reduced.  This test is
+        # written for being compatible with current code (1.0.0).  If the
+        # behaviour is considered sub-optimal, feel free to change.
+        assert booster.num_boosted_rounds() == 4
+
     def test_custom_objective(self):
         param = {'max_depth': 2, 'eta': 1, 'objective': 'reg:logistic'}
         watchlist = [(dtest, 'eval'), (dtrain, 'train')]
@@ -203,8 +217,8 @@ class TestModels:
         X = np.random.random((10, 3))
         y = np.random.randint(2, size=(10,))
 
-        dm1 = xgb.DMatrix(X, y)
-        dm2 = xgb.DMatrix(X, y, feature_names=("a", "b", "c"))
+        dm1 = xgb.DMatrix(X, y, feature_names=("a", "b", "c"))
+        dm2 = xgb.DMatrix(X, y)
 
         bst = xgb.train([], dm1)
         bst.predict(dm1)  # success
@@ -213,9 +227,6 @@ class TestModels:
         bst.predict(dm1)  # success
 
         bst = xgb.train([], dm2)
-        bst.predict(dm2)  # success
-        with pytest.raises(ValueError):
-            bst.predict(dm1)
         bst.predict(dm2)  # success
 
     def test_model_binary_io(self):
@@ -327,6 +338,25 @@ class TestModels:
                       'objective': 'multi:softmax'}
         validate_model(parameters)
 
+    @pytest.mark.skipif(**tm.no_sklearn())
+    def test_attributes(self):
+        from sklearn.datasets import load_iris
+        X, y = load_iris(return_X_y=True)
+        cls = xgb.XGBClassifier(n_estimators=2)
+        cls.fit(X, y, early_stopping_rounds=1, eval_set=[(X, y)])
+        assert cls.get_booster().best_ntree_limit == 2
+        assert cls.best_ntree_limit == cls.get_booster().best_ntree_limit
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "cls.json")
+            cls.save_model(path)
+
+            cls = xgb.XGBClassifier(n_estimators=2)
+            cls.load_model(path)
+            assert cls.get_booster().best_ntree_limit == 2
+            assert cls.best_ntree_limit == cls.get_booster().best_ntree_limit
+
+    @pytest.mark.skipif(**tm.no_sklearn())
     @pytest.mark.parametrize('booster', ['gbtree', 'dart'])
     def test_slice(self, booster):
         from sklearn.datasets import make_classification
@@ -401,7 +431,13 @@ class TestModels:
             booster[...:end] = booster
 
         sliced_0 = booster[1:3]
+        np.testing.assert_allclose(
+            booster.predict(dtrain, iteration_range=(1, 3)), sliced_0.predict(dtrain)
+        )
         sliced_1 = booster[3:7]
+        np.testing.assert_allclose(
+            booster.predict(dtrain, iteration_range=(3, 7)), sliced_1.predict(dtrain)
+        )
 
         predt_0 = sliced_0.predict(dtrain, output_margin=True)
         predt_1 = sliced_1.predict(dtrain, output_margin=True)
@@ -419,3 +455,31 @@ class TestModels:
         merged = predt_0 + predt_1 - 0.5
         single = booster[1:7].predict(dtrain, output_margin=True)
         np.testing.assert_allclose(merged, single, atol=1e-6)
+
+    @pytest.mark.skipif(**tm.no_pandas())
+    def test_feature_info(self):
+        import pandas as pd
+        rows = 100
+        cols = 10
+        X = rng.randn(rows, cols)
+        y = rng.randn(rows)
+        feature_names = ["test_feature_" + str(i) for i in range(cols)]
+        X_pd = pd.DataFrame(X, columns=feature_names)
+        X_pd.iloc[:, 3] = X_pd.iloc[:, 3].astype(np.int)
+
+        Xy = xgb.DMatrix(X_pd, y)
+        assert Xy.feature_types[3] == "int"
+        booster = xgb.train({}, dtrain=Xy, num_boost_round=1)
+
+        assert booster.feature_names == Xy.feature_names
+        assert booster.feature_names == feature_names
+        assert booster.feature_types == Xy.feature_types
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = tmpdir + "model.json"
+            booster.save_model(path)
+            booster = xgb.Booster()
+            booster.load_model(path)
+
+            assert booster.feature_names == Xy.feature_names
+            assert booster.feature_types == Xy.feature_types
