@@ -24,6 +24,8 @@
         <scala.binary.version>2.12</scala.binary.version>
         <hadoop.version>2.7.3</hadoop.version>
         <skip.create_jni>false</skip.create_jni>
+        <log.capi.invocation>OFF</log.capi.invocation>
+        <use.cuda>OFF</use.cuda>
     </properties>
 
     <description>H2O XGBoost Libraries</description>
