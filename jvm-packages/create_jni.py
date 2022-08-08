@@ -155,8 +155,7 @@ if __name__ == "__main__":
     cp(library_path, output_folder)
 
     print("copying pure-Python tracker")
-    cp("../dmlc-core/tracker/dmlc_tracker/tracker.py",
-       "{}/src/main/resources".format(xgboost4j))
+    cp("../python-package/xgboost/tracker.py", "{}/src/main/resources".format(xgboost4j))
 
     print("copying train/test files")
     maybe_makedirs("{}/src/test/resources".format(xgboost4j_spark))

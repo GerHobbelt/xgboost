@@ -98,6 +98,10 @@ class ColMaker: public TreeUpdater {
       LOG(FATAL) << "Updater `grow_colmaker` or `exact` tree method doesn't "
                     "support distributed training.";
     }
+    if (!dmat->SingleColBlock()) {
+      LOG(FATAL) << "Updater `grow_colmaker` or `exact` tree method doesn't "
+                    "support external memory training.";
+    }
     this->LazyGetColumnDensity(dmat);
     // rescale learning rate according to size of trees
     float lr = param_.learning_rate;
@@ -105,10 +109,9 @@ class ColMaker: public TreeUpdater {
     interaction_constraints_.Configure(param_, dmat->Info().num_row_);
     // build tree
     for (auto tree : trees) {
-      Builder builder(
-        param_,
-        colmaker_param_,
-        interaction_constraints_, column_densities_);
+      CHECK(tparam_);
+      Builder builder(param_, colmaker_param_, interaction_constraints_, tparam_,
+                      column_densities_);
       builder.Update(gpair->ConstHostVector(), dmat, tree);
     }
     param_.learning_rate = lr;
@@ -150,12 +153,12 @@ class ColMaker: public TreeUpdater {
   class Builder {
    public:
     // constructor
-    explicit Builder(const TrainParam& param,
-                     const ColMakerTrainParam& colmaker_train_param,
+    explicit Builder(const TrainParam &param, const ColMakerTrainParam &colmaker_train_param,
                      FeatureInteractionConstraintHost _interaction_constraints,
-                     const std::vector<float> &column_densities)
-        : param_(param), colmaker_train_param_{colmaker_train_param},
-          nthread_(omp_get_max_threads()),
+                     GenericParameter const *ctx, const std::vector<float> &column_densities)
+        : param_(param),
+          colmaker_train_param_{colmaker_train_param},
+          ctx_{ctx},
           tree_evaluator_(param_, column_densities.size(), GenericParameter::kCpuId),
           interaction_constraints_{std::move(_interaction_constraints)},
           column_densities_(column_densities) {}
@@ -234,7 +237,7 @@ class ColMaker: public TreeUpdater {
         // setup temp space for each thread
         // reserve a small space
         stemp_.clear();
-        stemp_.resize(this->nthread_, std::vector<ThreadEntry>());
+        stemp_.resize(this->ctx_->Threads(), std::vector<ThreadEntry>());
         for (auto& i : stemp_) {
           i.clear(); i.reserve(256);
         }
@@ -440,15 +443,16 @@ class ColMaker: public TreeUpdater {
     }
 
     // update the solution candidate
-    virtual void UpdateSolution(const SparsePage &batch,
+    virtual void UpdateSolution(const SortedCSCPage &batch,
                                 const std::vector<bst_feature_t> &feat_set,
                                 const std::vector<GradientPair> &gpair,
                                 DMatrix*) {
       // start enumeration
       const auto num_features = static_cast<bst_omp_uint>(feat_set.size());
 #if defined(_OPENMP)
+      CHECK(this->ctx_);
       const int batch_size =  // NOLINT
-          std::max(static_cast<int>(num_features / this->nthread_ / 32), 1);
+          std::max(static_cast<int>(num_features / this->ctx_->Threads() / 32), 1);
 #endif  // defined(_OPENMP)
       {
         auto page = batch.GetView();
@@ -549,7 +553,8 @@ class ColMaker: public TreeUpdater {
     virtual void SyncBestSolution(const std::vector<int> &qexpand) {
       for (int nid : qexpand) {
         NodeEntry &e = snode_[nid];
-        for (int tid = 0; tid < this->nthread_; ++tid) {
+        CHECK(this->ctx_);
+        for (int tid = 0; tid < this->ctx_->Threads(); ++tid) {
           e.best.Update(stemp_[tid][nid].best);
         }
       }
@@ -605,7 +610,7 @@ class ColMaker: public TreeUpdater {
     const TrainParam& param_;
     const ColMakerTrainParam& colmaker_train_param_;
     // number of omp thread used during training
-    const int nthread_;
+    GenericParameter const* ctx_;
     common::ColumnSampler column_sampler_;
     // Instance Data: current node position in the tree of each instance
     std::vector<int> position_;

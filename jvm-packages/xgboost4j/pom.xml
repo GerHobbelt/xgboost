@@ -6,11 +6,11 @@
     <!--parent>
         <groupId>ai.h2o</groupId>
         <artifactId>xgboost-jvm_2.12</artifactId>
-        <version>1.4.2</version>
+        <version>1.5.0</version>
     </parent-->
     <groupId>ai.h2o</groupId>
     <artifactId>xgboost4j_2.12</artifactId>
-    <version>1.4.2</version>
+    <version>1.5.0</version>
     <packaging>jar</packaging>
     <name>xgboost4j</name>
 
@@ -170,7 +170,7 @@
           <groupId>org.scalatest</groupId>
           <artifactId>scalatest_${scala.binary.version}</artifactId>
           <version>3.0.5</version>
-          <scope>compile</scope>
+          <scope>provided</scope>
         </dependency>
       <dependency>
         <groupId>com.esotericsoftware.kryo</groupId>

@@ -8,7 +8,7 @@ import os
 import sys
 import warnings
 
-from .core import DMatrix, DeviceQuantileDMatrix, Booster
+from .core import DMatrix, DeviceQuantileDMatrix, Booster, DataIter
 from .training import train, cv
 from . import rabit  # noqa
 from . import tracker  # noqa
@@ -30,10 +30,10 @@ if sys.version_info[:2] == (3, 5):
         FutureWarning)
 
 VERSION_FILE = os.path.join(os.path.dirname(__file__), 'VERSION')
-with open(VERSION_FILE) as f:
+with open(VERSION_FILE, encoding="ascii") as f:
     __version__ = f.read().strip()
 
-__all__ = ['DMatrix', 'DeviceQuantileDMatrix', 'Booster',
+__all__ = ['DMatrix', 'DeviceQuantileDMatrix', 'Booster', 'DataIter',
            'train', 'cv',
            'RabitTracker',
            'XGBModel', 'XGBClassifier', 'XGBRegressor', 'XGBRanker',

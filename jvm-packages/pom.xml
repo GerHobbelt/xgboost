@@ -6,7 +6,7 @@
 
     <groupId>ai.h2o</groupId>
     <artifactId>xgboost-jvm_2.12</artifactId>
-    <version>1.4.2</version>
+    <version>1.5.0</version>
     <packaging>pom</packaging>
     <name>XGBoost JVM Package</name>
     <description>H2O XGBoost Libraries</description>
@@ -31,9 +31,9 @@
       </developer>
     </developers>
     <scm>
-      <url>https://github.com/h2oai/xgboost</url>
-      <connection>scm:git:https://github.com/h2oai/xgboost.git</connection>
-      <developerConnection>scm:git:git@github.com:h2oai/xgboost.git</developerConnection>
+        <connection>scm:git:git:/github.com/dmlc/xgboost.git</connection>
+        <developerConnection>scm:git:ssh://github.com/dmlc/xgboost.git</developerConnection>
+        <url>https://github.com/dmlc/xgboost</url>
     </scm>
     <issueManagement>
       <system>Jira</system>
@@ -621,6 +621,7 @@
             <groupId>org.scala-lang</groupId>
             <artifactId>scala-compiler</artifactId>
             <version>${scala.version}</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.scala-lang</groupId>
