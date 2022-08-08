@@ -171,10 +171,7 @@ private[this] class XGBoostExecutionParamsFactory(rawParams: Map[String, Any], s
                                  .getOrElse("allow_non_zero_for_missing", false)
                                  .asInstanceOf[Boolean]
     validateSparkSslConf
-<<<<<<< HEAD
-=======
     var treeMethod: Option[String] = None
->>>>>>> v1.2.0
     if (overridedParams.contains("tree_method")) {
       require(overridedParams("tree_method") == "hist" ||
         overridedParams("tree_method") == "approx" ||
