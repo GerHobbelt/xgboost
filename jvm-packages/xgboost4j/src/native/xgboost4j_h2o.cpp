@@ -395,6 +395,33 @@ JNIEXPORT jint JNICALL Java_ai_h2o_xgboost4j_java_XGBoostJNI_RabitAllreduce
 (JNIEnv * a0, jclass a1, jobject a2, jint a3, jint a4, jint a5)
 { return Java_ml_dmlc_xgboost4j_java_XGBoostJNI_RabitAllreduce(a0, a1, a2, a3, a4, a5); }
 
+/*
+ * Class:     ml_dmlc_xgboost4j_java_GpuXGBoostJNI
+ * Method:    XGDMatrixSetInfoFromInterface
+ * Signature: (JLjava/lang/String;Ljava/lang/String;)I
+ */
+JNIEXPORT jint JNICALL Java_ai_h2o_xgboost4j_java_XGBoostJNI_XGDMatrixSetInfoFromInterface
+(JNIEnv * a0, jclass a1, jlong a2, jstring a3, jstring a4)
+{ return Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetInfoFromInterface(a0, a1, a2, a3, a4); }
+
+/*
+ * Class:     ml_dmlc_xgboost4j_java_GpuXGBoostJNI
+ * Method:    XGDeviceQuantileDMatrixCreateFromCallback
+ * Signature: (Ljava/util/Iterator;FII[J)I
+ */
+JNIEXPORT jint JNICALL Java_ai_h2o_xgboost4j_java_XGBoostJNI_XGDeviceQuantileDMatrixCreateFromCallback
+(JNIEnv * a0, jclass a1, jobject a2, jfloat a3, jint a4, jint a5, jlongArray a6)
+{ return Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDeviceQuantileDMatrixCreateFromCallback(a0, a1, a2, a3, a4, a5, a6); }
+
+/*
+ * Class:     ml_dmlc_xgboost4j_java_GpuXGBoostJNI
+ * Method:    XGDMatrixCreateFromArrayInterfaceColumns
+ * Signature: (Ljava/lang/String;FI[J)I
+ */
+JNIEXPORT jint JNICALL Java_ai_h2o_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFromArrayInterfaceColumns
+(JNIEnv * a0, jclass a1, jstring a2, jfloat a3, jint a4, jlongArray a5)
+{ return Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFromArrayInterfaceColumns(a0, a1, a2, a3, a4, a5); }
+
 #ifdef __cplusplus
 }
 #endif

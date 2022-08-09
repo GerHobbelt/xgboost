@@ -300,12 +300,14 @@ if __name__ == '__main__':
     # - python setup.py develop   # same as above
     logging.basicConfig(level=logging.INFO)
 
+    with open(os.path.join(CURRENT_DIR, 'xgboost/NAME'), encoding="ascii") as fd:
+        name = fd.read().strip()
     with open(os.path.join(CURRENT_DIR, 'README.rst'), encoding='utf-8') as fd:
         description = fd.read()
     with open(os.path.join(CURRENT_DIR, 'xgboost/VERSION'), encoding="ascii") as fd:
         version = fd.read().strip()
 
-    setup(name='xgboost',
+    setup(name=name,
           version=version,
           description="XGBoost Python Package",
           long_description=description,
