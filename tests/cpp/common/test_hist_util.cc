@@ -1,5 +1,5 @@
 /*!
- * Copyright 2019-2021 by XGBoost Contributors
+ * Copyright 2019-2022 by XGBoost Contributors
  */
 #include <gtest/gtest.h>
 #include <vector>
@@ -14,15 +14,7 @@
 namespace xgboost {
 namespace common {
 
-size_t GetNThreads() {
-  size_t nthreads;
-  #pragma omp parallel
-  {
-    #pragma omp master
-    nthreads = omp_get_num_threads();
-  }
-  return nthreads;
-}
+size_t GetNThreads() { return common::OmpGetNumThreads(0); }
 
 template <typename GradientSumT>
 void ParallelGHistBuilderReset() {
@@ -157,8 +149,7 @@ TEST(CutsBuilder, SearchGroupInd) {
   group[2] = 7;
   group[3] = 5;
 
-  p_mat->Info().SetInfo(
-      "group", group.data(), DataType::kUInt32, kNumGroups);
+  p_mat->SetInfo("group", group.data(), DataType::kUInt32, kNumGroups);
 
   HistogramCuts hmat;
 
@@ -188,7 +179,7 @@ TEST(HistUtil, DenseCutsCategorical) {
        std::vector<float> x_sorted(x);
        std::sort(x_sorted.begin(), x_sorted.end());
        auto dmat = GetDMatrixFromData(x, n, 1);
-       HistogramCuts cuts = SketchOnDMatrix(dmat.get(), num_bins);
+       HistogramCuts cuts = SketchOnDMatrix(dmat.get(), num_bins, common::OmpGetNumThreads(0));
        auto cuts_from_sketch = cuts.Values();
        EXPECT_LT(cuts.MinValues()[0], x_sorted.front());
        EXPECT_GT(cuts_from_sketch.front(), x_sorted.front());
@@ -207,7 +198,7 @@ TEST(HistUtil, DenseCutsAccuracyTest) {
     auto x = GenerateRandom(num_rows, num_columns);
     auto dmat = GetDMatrixFromData(x, num_rows, num_columns);
     for (auto num_bins : bin_sizes) {
-      HistogramCuts cuts = SketchOnDMatrix(dmat.get(), num_bins);
+      HistogramCuts cuts = SketchOnDMatrix(dmat.get(), num_bins, common::OmpGetNumThreads(0));
       ValidateCuts(cuts, dmat.get(), num_bins);
     }
   }
@@ -223,13 +214,21 @@ TEST(HistUtil, DenseCutsAccuracyTestWeights) {
     auto w = GenerateRandomWeights(num_rows);
     dmat->Info().weights_.HostVector() = w;
     for (auto num_bins : bin_sizes) {
-      HistogramCuts cuts = SketchOnDMatrix(dmat.get(), num_bins);
-      ValidateCuts(cuts, dmat.get(), num_bins);
+      {
+        HistogramCuts cuts =
+            SketchOnDMatrix(dmat.get(), num_bins, common::OmpGetNumThreads(0), true);
+        ValidateCuts(cuts, dmat.get(), num_bins);
+      }
+      {
+        HistogramCuts cuts =
+            SketchOnDMatrix(dmat.get(), num_bins, common::OmpGetNumThreads(0), false);
+        ValidateCuts(cuts, dmat.get(), num_bins);
+      }
     }
   }
 }
 
-TEST(HistUtil, QuantileWithHessian) {
+void TestQuantileWithHessian(bool use_sorted) {
   int bin_sizes[] = {2, 16, 256, 512};
   int sizes[] = {1000, 1500};
   int num_columns = 5;
@@ -243,13 +242,15 @@ TEST(HistUtil, QuantileWithHessian) {
     dmat->Info().weights_.HostVector() = w;
 
     for (auto num_bins : bin_sizes) {
-      HistogramCuts cuts_hess = SketchOnDMatrix(dmat.get(), num_bins, hessian);
+      HistogramCuts cuts_hess =
+          SketchOnDMatrix(dmat.get(), num_bins, common::OmpGetNumThreads(0), use_sorted, hessian);
       for (size_t i = 0; i < w.size(); ++i) {
         dmat->Info().weights_.HostVector()[i] = w[i] * hessian[i];
       }
       ValidateCuts(cuts_hess, dmat.get(), num_bins);
 
-      HistogramCuts cuts_wh = SketchOnDMatrix(dmat.get(), num_bins);
+      HistogramCuts cuts_wh =
+          SketchOnDMatrix(dmat.get(), num_bins, common::OmpGetNumThreads(0), use_sorted);
       ValidateCuts(cuts_wh, dmat.get(), num_bins);
 
       ASSERT_EQ(cuts_hess.Values().size(), cuts_wh.Values().size());
@@ -262,6 +263,11 @@ TEST(HistUtil, QuantileWithHessian) {
   }
 }
 
+TEST(HistUtil, QuantileWithHessian) {
+  TestQuantileWithHessian(true);
+  TestQuantileWithHessian(false);
+}
+
 TEST(HistUtil, DenseCutsExternalMemory) {
   int bin_sizes[] = {2, 16, 256, 512};
   int sizes[] = {100, 1000, 1500};
@@ -272,7 +278,7 @@ TEST(HistUtil, DenseCutsExternalMemory) {
     auto dmat =
         GetExternalMemoryDMatrixFromData(x, num_rows, num_columns, 50, tmpdir);
     for (auto num_bins : bin_sizes) {
-      HistogramCuts cuts = SketchOnDMatrix(dmat.get(), num_bins);
+      HistogramCuts cuts = SketchOnDMatrix(dmat.get(), num_bins, common::OmpGetNumThreads(0));
       ValidateCuts(cuts, dmat.get(), num_bins);
     }
   }
@@ -292,15 +298,15 @@ TEST(HistUtil, IndexBinBound) {
   for (auto max_bin : bin_sizes) {
     auto p_fmat = RandomDataGenerator(kRows, kCols, 0).GenerateDMatrix();
 
-    GHistIndexMatrix hmat(p_fmat.get(), max_bin);
+    GHistIndexMatrix hmat(p_fmat.get(), max_bin, 0.5, false, common::OmpGetNumThreads(0));
     EXPECT_EQ(hmat.index.Size(), kRows*kCols);
     EXPECT_EQ(expected_bin_type_sizes[bin_id++], hmat.index.GetBinTypeSize());
   }
 }
 
 template <typename T>
-void CheckIndexData(T* data_ptr, uint32_t* offsets,
-                    const GHistIndexMatrix& hmat, size_t n_cols) {
+void CheckIndexData(T const* data_ptr, uint32_t const* offsets, const GHistIndexMatrix& hmat,
+                    size_t n_cols) {
   for (size_t i = 0; i < hmat.index.Size(); ++i) {
     EXPECT_EQ(data_ptr[i] + offsets[i % n_cols], hmat.index[i]);
   }
@@ -315,8 +321,8 @@ TEST(HistUtil, IndexBinData) {
 
   for (auto max_bin : kBinSizes) {
     auto p_fmat = RandomDataGenerator(kRows, kCols, 0).GenerateDMatrix();
-    GHistIndexMatrix hmat(p_fmat.get(), max_bin);
-    uint32_t* offsets = hmat.index.Offset();
+    GHistIndexMatrix hmat(p_fmat.get(), max_bin, 0.5, false, common::OmpGetNumThreads(0));
+    uint32_t const* offsets = hmat.index.Offset();
     EXPECT_EQ(hmat.index.Size(), kRows*kCols);
     switch (max_bin) {
       case kBinSizes[0]:
@@ -340,9 +346,10 @@ void TestSketchFromWeights(bool with_group) {
   size_t constexpr kGroups = 10;
   auto m =
       RandomDataGenerator{kRows, kCols, 0}.Device(0).GenerateDMatrix();
-  common::HistogramCuts cuts = SketchOnDMatrix(m.get(), kBins);
+  common::HistogramCuts cuts = SketchOnDMatrix(m.get(), kBins, common::OmpGetNumThreads(0));
 
   MetaInfo info;
+  Context ctx;
   auto& h_weights = info.weights_.HostVector();
   if (with_group) {
     h_weights.resize(kGroups);
@@ -356,7 +363,7 @@ void TestSketchFromWeights(bool with_group) {
     for (size_t i = 0; i < kGroups; ++i) {
       groups[i] = kRows / kGroups;
     }
-    info.SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
+    info.SetInfo(ctx, "group", groups.data(), DataType::kUInt32, kGroups);
   }
 
   info.num_row_ = kRows;
@@ -364,17 +371,17 @@ void TestSketchFromWeights(bool with_group) {
 
   // Assign weights.
   if (with_group) {
-    m->Info().SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
+    m->SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
   }
 
-  m->Info().SetInfo("weight", h_weights.data(), DataType::kFloat32, h_weights.size());
+  m->SetInfo("weight", h_weights.data(), DataType::kFloat32, h_weights.size());
   m->Info().num_col_ = kCols;
   m->Info().num_row_ = kRows;
   ASSERT_EQ(cuts.Ptrs().size(), kCols + 1);
   ValidateCuts(cuts, m.get(), kBins);
 
   if (with_group) {
-    HistogramCuts non_weighted = SketchOnDMatrix(m.get(), kBins);
+    HistogramCuts non_weighted = SketchOnDMatrix(m.get(), kBins, common::OmpGetNumThreads(0));
     for (size_t i = 0; i < cuts.Values().size(); ++i) {
       EXPECT_EQ(cuts.Values()[i], non_weighted.Values()[i]);
     }
@@ -393,14 +400,12 @@ TEST(HistUtil, SketchFromWeights) {
 }
 
 TEST(HistUtil, SketchCategoricalFeatures) {
-  TestCategoricalSketch(1000, 256, 32, false,
-                        [](DMatrix *p_fmat, int32_t num_bins) {
-                          return SketchOnDMatrix(p_fmat, num_bins);
-                        });
-  TestCategoricalSketch(1000, 256, 32, true,
-                        [](DMatrix *p_fmat, int32_t num_bins) {
-                          return SketchOnDMatrix(p_fmat, num_bins);
-                        });
+  TestCategoricalSketch(1000, 256, 32, false, [](DMatrix* p_fmat, int32_t num_bins) {
+    return SketchOnDMatrix(p_fmat, num_bins, common::OmpGetNumThreads(0));
+  });
+  TestCategoricalSketch(1000, 256, 32, true, [](DMatrix* p_fmat, int32_t num_bins) {
+    return SketchOnDMatrix(p_fmat, num_bins, common::OmpGetNumThreads(0));
+  });
 }
 }  // namespace common
 }  // namespace xgboost

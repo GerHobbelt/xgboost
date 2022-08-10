@@ -33,14 +33,13 @@ def lazy_isinstance(instance, module, name):
 # pandas
 try:
     from pandas import DataFrame, Series
-    from pandas import MultiIndex, Int64Index
+    from pandas import MultiIndex
     from pandas import concat as pandas_concat
 
     PANDAS_INSTALLED = True
 except ImportError:
 
     MultiIndex = object
-    Int64Index = object
     DataFrame: Any = object
     Series = object
     pandas_concat = None
@@ -112,12 +111,10 @@ except pkg_resources.DistributionNotFound:
 
 
 try:
-    import sparse
     import scipy.sparse as scipy_sparse
     from scipy.sparse import csr_matrix as scipy_csr
     SCIPY_INSTALLED = True
 except ImportError:
-    sparse = False
     scipy_sparse = False
     scipy_csr: Any = object
     SCIPY_INSTALLED = False

@@ -1,13 +1,28 @@
 /*!
- * Copyright 2018-2021 by Contributors
+ * Copyright 2018-2022 by Contributors
  */
 #include <gtest/gtest.h>
-#include "../../helpers.h"
+
+#include <limits>
+
+#include "../../../../src/common/categorical.h"
+#include "../../../../src/common/row_set.h"
+#include "../../../../src/tree/hist/expand_entry.h"
 #include "../../../../src/tree/hist/histogram.h"
-#include "../../../../src/tree/updater_quantile_hist.h"
+#include "../../categorical_helpers.h"
+#include "../../helpers.h"
 
 namespace xgboost {
 namespace tree {
+namespace {
+void InitRowPartitionForTest(common::RowSetCollection *row_set, size_t n_samples, size_t base_rowid = 0) {
+  auto &row_indices = *row_set->Data();
+  row_indices.resize(n_samples);
+  std::iota(row_indices.begin(), row_indices.end(), base_rowid);
+  row_set->Init();
+}
+}  // anonymous namespace
+
 template <typename GradientSumT>
 void TestAddHistRows(bool is_distributed) {
   std::vector<CPUExpandEntry> nodes_for_explicit_hist_build_;
@@ -19,10 +34,7 @@ void TestAddHistRows(bool is_distributed) {
   int32_t constexpr kMaxBins = 4;
   auto p_fmat =
       RandomDataGenerator(kNRows, kNCols, 0.8).Seed(3).GenerateDMatrix();
-  auto const &gmat = *(p_fmat
-                           ->GetBatches<GHistIndexMatrix>(
-                               BatchParam{GenericParameter::kCpuId, kMaxBins})
-                           .begin());
+  auto const &gmat = *(p_fmat->GetBatches<GHistIndexMatrix>(BatchParam{kMaxBins, 0.5}).begin());
 
   RegTree tree;
 
@@ -35,7 +47,7 @@ void TestAddHistRows(bool is_distributed) {
   nodes_for_subtraction_trick_.emplace_back(6, tree.GetDepth(6), 0.0f);
 
   HistogramBuilder<GradientSumT, CPUExpandEntry> histogram_builder;
-  histogram_builder.Reset(gmat.cut.TotalBins(), kMaxBins, omp_get_max_threads(),
+  histogram_builder.Reset(gmat.cut.TotalBins(), {kMaxBins, 0.5}, omp_get_max_threads(), 1,
                           is_distributed);
   histogram_builder.AddHistRows(&starting_index, &sync_count,
                                 nodes_for_explicit_hist_build_,
@@ -74,16 +86,13 @@ void TestSyncHist(bool is_distributed) {
 
   auto p_fmat =
       RandomDataGenerator(kNRows, kNCols, 0.8).Seed(3).GenerateDMatrix();
-  auto const &gmat = *(p_fmat
-                           ->GetBatches<GHistIndexMatrix>(
-                               BatchParam{GenericParameter::kCpuId, kMaxBins})
-                           .begin());
+  auto const &gmat = *(p_fmat->GetBatches<GHistIndexMatrix>(BatchParam{kMaxBins, 0.5}).begin());
 
   HistogramBuilder<GradientSumT, CPUExpandEntry> histogram;
   uint32_t total_bins = gmat.cut.Ptrs().back();
-  histogram.Reset(total_bins, kMaxBins, omp_get_max_threads(), is_distributed);
+  histogram.Reset(total_bins, {kMaxBins, 0.5}, omp_get_max_threads(), 1, is_distributed);
 
-  RowSetCollection row_set_collection_;
+  common::RowSetCollection row_set_collection_;
   {
     row_set_collection_.Clear();
     std::vector<size_t> &row_indices = *row_set_collection_.Data();
@@ -234,10 +243,7 @@ void TestBuildHistogram(bool is_distributed) {
   int32_t constexpr kMaxBins = 4;
   auto p_fmat =
       RandomDataGenerator(kNRows, kNCols, 0.8).Seed(3).GenerateDMatrix();
-  auto const &gmat = *(p_fmat
-                           ->GetBatches<GHistIndexMatrix>(
-                               BatchParam{GenericParameter::kCpuId, kMaxBins})
-                           .begin());
+  auto const &gmat = *(p_fmat->GetBatches<GHistIndexMatrix>(BatchParam{kMaxBins, 0.5}).begin());
   uint32_t total_bins = gmat.cut.Ptrs().back();
 
   static double constexpr kEps = 1e-6;
@@ -247,22 +253,24 @@ void TestBuildHistogram(bool is_distributed) {
 
   bst_node_t nid = 0;
   HistogramBuilder<GradientSumT, CPUExpandEntry> histogram;
-  histogram.Reset(total_bins, kMaxBins, omp_get_max_threads(), is_distributed);
+  histogram.Reset(total_bins, {kMaxBins, 0.5}, omp_get_max_threads(), 1, is_distributed);
 
   RegTree tree;
 
-  RowSetCollection row_set_collection_;
-  row_set_collection_.Clear();
-  std::vector<size_t> &row_indices = *row_set_collection_.Data();
+  common::RowSetCollection row_set_collection;
+  row_set_collection.Clear();
+  std::vector<size_t> &row_indices = *row_set_collection.Data();
   row_indices.resize(kNRows);
   std::iota(row_indices.begin(), row_indices.end(), 0);
-  row_set_collection_.Init();
+  row_set_collection.Init();
 
-  CPUExpandEntry node(CPUExpandEntry::kRootNid, tree.GetDepth(0), 0.0f);
-  std::vector<CPUExpandEntry> nodes_for_explicit_hist_build_;
-  nodes_for_explicit_hist_build_.push_back(node);
-  histogram.BuildHist(p_fmat.get(), &tree, row_set_collection_,
-                      nodes_for_explicit_hist_build_, {}, gpair);
+  CPUExpandEntry node(RegTree::kRoot, tree.GetDepth(0), 0.0f);
+  std::vector<CPUExpandEntry> nodes_for_explicit_hist_build;
+  nodes_for_explicit_hist_build.push_back(node);
+  for (auto const &gidx : p_fmat->GetBatches<GHistIndexMatrix>({kMaxBins, 0.5})) {
+    histogram.BuildHist(0, gidx, &tree, row_set_collection,
+                        nodes_for_explicit_hist_build, {}, gpair);
+  }
 
   // Check if number of histogram bins is correct
   ASSERT_EQ(histogram.Histogram()[nid].size(), gmat.cut.Ptrs().back());
@@ -293,6 +301,157 @@ TEST(CPUHistogram, BuildHist) {
 
   TestBuildHistogram<float>(false);
   TestBuildHistogram<double>(false);
+}
+
+namespace {
+void TestHistogramCategorical(size_t n_categories) {
+  size_t constexpr kRows = 340;
+  int32_t constexpr kBins = 256;
+  auto x = GenerateRandomCategoricalSingleColumn(kRows, n_categories);
+  auto cat_m = GetDMatrixFromData(x, kRows, 1);
+  cat_m->Info().feature_types.HostVector().push_back(FeatureType::kCategorical);
+  BatchParam batch_param{0, static_cast<int32_t>(kBins)};
+
+  RegTree tree;
+  CPUExpandEntry node(RegTree::kRoot, tree.GetDepth(0), 0.0f);
+  std::vector<CPUExpandEntry> nodes_for_explicit_hist_build;
+  nodes_for_explicit_hist_build.push_back(node);
+
+  auto gpair = GenerateRandomGradients(kRows, 0, 2);
+
+  common::RowSetCollection row_set_collection;
+  row_set_collection.Clear();
+  std::vector<size_t> &row_indices = *row_set_collection.Data();
+  row_indices.resize(kRows);
+  std::iota(row_indices.begin(), row_indices.end(), 0);
+  row_set_collection.Init();
+
+  /**
+   * Generate hist with cat data.
+   */
+  HistogramBuilder<double, CPUExpandEntry> cat_hist;
+  for (auto const &gidx : cat_m->GetBatches<GHistIndexMatrix>({kBins, 0.5})) {
+    auto total_bins = gidx.cut.TotalBins();
+    cat_hist.Reset(total_bins, {kBins, 0.5}, omp_get_max_threads(), 1, false);
+    cat_hist.BuildHist(0, gidx, &tree, row_set_collection,
+                        nodes_for_explicit_hist_build, {}, gpair.HostVector());
+  }
+
+  /**
+   * Generate hist with one hot encoded data.
+   */
+  auto x_encoded = OneHotEncodeFeature(x, n_categories);
+  auto encode_m = GetDMatrixFromData(x_encoded, kRows, n_categories);
+  HistogramBuilder<double, CPUExpandEntry> onehot_hist;
+  for (auto const &gidx : encode_m->GetBatches<GHistIndexMatrix>({kBins, 0.5})) {
+    auto total_bins = gidx.cut.TotalBins();
+    onehot_hist.Reset(total_bins, {kBins, 0.5}, omp_get_max_threads(), 1, false);
+    onehot_hist.BuildHist(0, gidx, &tree, row_set_collection, nodes_for_explicit_hist_build, {},
+                          gpair.HostVector());
+  }
+
+  auto cat = cat_hist.Histogram()[0];
+  auto onehot = onehot_hist.Histogram()[0];
+  ValidateCategoricalHistogram(n_categories, onehot, cat);
+}
+}  // anonymous namespace
+
+TEST(CPUHistogram, Categorical) {
+  for (size_t n_categories = 2; n_categories < 8; ++n_categories) {
+    TestHistogramCategorical(n_categories);
+  }
+}
+namespace {
+void TestHistogramExternalMemory(BatchParam batch_param, bool is_approx) {
+  size_t constexpr kEntries = 1 << 16;
+  auto m = CreateSparsePageDMatrix(kEntries, "cache");
+
+  std::vector<float> hess(m->Info().num_row_, 1.0);
+  if (is_approx) {
+    batch_param.hess = hess;
+  }
+
+  std::vector<size_t> partition_size(1, 0);
+  size_t total_bins{0};
+  size_t n_samples{0};
+
+  auto gpair = GenerateRandomGradients(m->Info().num_row_, 0.0, 1.0);
+  auto const &h_gpair = gpair.HostVector();
+
+  RegTree tree;
+  std::vector<CPUExpandEntry> nodes;
+  nodes.emplace_back(0, tree.GetDepth(0), 0.0f);
+
+  common::GHistRow<double> multi_page;
+  HistogramBuilder<double, CPUExpandEntry> multi_build;
+  {
+    /**
+     * Multi page
+     */
+    std::vector<common::RowSetCollection> rows_set;
+    for (auto const &page : m->GetBatches<GHistIndexMatrix>(batch_param)) {
+      CHECK_LT(page.base_rowid, m->Info().num_row_);
+      auto n_rows_in_node = page.Size();
+      partition_size[0] = std::max(partition_size[0], n_rows_in_node);
+      total_bins = page.cut.TotalBins();
+      n_samples += n_rows_in_node;
+
+      rows_set.emplace_back();
+      InitRowPartitionForTest(&rows_set.back(), n_rows_in_node, page.base_rowid);
+    }
+    ASSERT_EQ(n_samples, m->Info().num_row_);
+
+    common::BlockedSpace2d space{
+        1, [&](size_t nidx_in_set) { return partition_size.at(nidx_in_set); },
+        256};
+
+    multi_build.Reset(total_bins, batch_param, common::OmpGetNumThreads(0), rows_set.size(), false);
+
+    size_t page_idx{0};
+    for (auto const &page : m->GetBatches<GHistIndexMatrix>(batch_param)) {
+      multi_build.BuildHist(page_idx, space, page, &tree, rows_set.at(page_idx), nodes, {},
+                            h_gpair);
+      ++page_idx;
+    }
+    ASSERT_EQ(page_idx, 2);
+    multi_page = multi_build.Histogram()[0];
+  }
+
+  HistogramBuilder<double, CPUExpandEntry> single_build;
+  common::GHistRow<double> single_page;
+  {
+    /**
+     * Single page
+     */
+    common::RowSetCollection row_set_collection;
+    InitRowPartitionForTest(&row_set_collection, n_samples);
+
+    single_build.Reset(total_bins, batch_param, common::OmpGetNumThreads(0), 1, false);
+    SparsePage concat;
+    GHistIndexMatrix gmat;
+    std::vector<float> hess(m->Info().num_row_, 1.0f);
+    gmat.Init(m.get(), batch_param.max_bin, std::numeric_limits<double>::quiet_NaN(), false,
+              common::OmpGetNumThreads(0), hess);
+    single_build.BuildHist(0, gmat, &tree, row_set_collection, nodes, {}, h_gpair);
+    single_page = single_build.Histogram()[0];
+  }
+
+  for (size_t i = 0; i < single_page.size(); ++i) {
+    ASSERT_NEAR(single_page[i].GetGrad(), multi_page[i].GetGrad(), kRtEps);
+    ASSERT_NEAR(single_page[i].GetHess(), multi_page[i].GetHess(), kRtEps);
+  }
+}
+}  // anonymous namespace
+
+TEST(CPUHistogram, ExternalMemory) {
+  int32_t constexpr kBins = 256;
+  TestHistogramExternalMemory(BatchParam{kBins, common::Span<float>{}, false}, true);
+
+  float sparse_thresh{0.5};
+  TestHistogramExternalMemory({kBins, sparse_thresh}, false);
+  sparse_thresh = std::numeric_limits<float>::quiet_NaN();
+  TestHistogramExternalMemory({kBins, sparse_thresh}, false);
+
 }
 }  // namespace tree
 }  // namespace xgboost

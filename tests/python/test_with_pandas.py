@@ -1,8 +1,10 @@
-# -*- coding: utf-8 -*-
+import os
+import tempfile
 import numpy as np
 import xgboost as xgb
 import testing as tm
 import pytest
+from test_dmatrix import set_base_margin_info
 
 try:
     import pandas as pd
@@ -108,6 +110,12 @@ class TestPandas:
         assert dm.num_row() == 2
         assert dm.num_col() == 6
 
+        # test Index as columns
+        df = pd.DataFrame([[1, 1.1], [2, 2.2]], columns=pd.Index([1, 2]))
+        print(df.columns, isinstance(df.columns, pd.Index))
+        Xy = xgb.DMatrix(df)
+        np.testing.assert_equal(np.array(Xy.feature_names), np.array(["1", "2"]))
+
     def test_slice(self):
         rng = np.random.RandomState(1994)
         rows = 100
@@ -147,7 +155,8 @@ class TestPandas:
         assert not np.any(arr == -1.0)
 
         X = X["f0"]
-        with pytest.raises(ValueError):
+        y = y[:X.shape[0]]
+        with pytest.raises(ValueError, match=r".*enable_categorical.*"):
             xgb.DMatrix(X, y)
 
         Xy = xgb.DMatrix(X, y, enable_categorical=True)
@@ -204,6 +213,9 @@ class TestPandas:
         assert data.num_col() == kCols
 
         np.testing.assert_array_equal(data.get_weight(), w)
+
+    def test_base_margin(self):
+        set_base_margin_info(pd.DataFrame, xgb.DMatrix, "hist")
 
     def test_cv_as_pandas(self):
         dm = xgb.DMatrix(dpath + 'agaricus.txt.train')
@@ -282,3 +294,39 @@ class TestPandas:
         assert isinstance(params, list)
         assert 'auc' not in cv.columns[0]
         assert 'error' in cv.columns[0]
+
+    def test_nullable_type(self):
+        y = np.random.default_rng(0).random(4)
+
+        def to_bytes(Xy: xgb.DMatrix) -> bytes:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                path = os.path.join(tmpdir, "Xy.dmatrix")
+                Xy.save_binary(path)
+                with open(path, "rb") as fd:
+                    result = fd.read()
+            return result
+
+        def test_int(dtype) -> bytes:
+            arr = pd.DataFrame(
+                {"f0": [1, 2, None, 3], "f1": [4, 3, None, 1]}, dtype=dtype
+            )
+            Xy = xgb.DMatrix(arr, y)
+            Xy.feature_types = None
+            return to_bytes(Xy)
+
+        b0 = test_int(np.float32)
+        b1 = test_int(pd.Int16Dtype())
+        assert b0 == b1
+
+        def test_bool(dtype) -> bytes:
+            arr = pd.DataFrame(
+                {"f0": [True, False, None, True], "f1": [False, True, None, True]},
+                dtype=dtype,
+            )
+            Xy = xgb.DMatrix(arr, y)
+            Xy.feature_types = None
+            return to_bytes(Xy)
+
+        b0 = test_bool(pd.BooleanDtype())
+        b1 = test_bool(np.bool)
+        assert b0 != b1         # None is converted to False with np.bool

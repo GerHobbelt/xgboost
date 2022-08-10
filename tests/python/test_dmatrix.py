@@ -15,6 +15,51 @@ dpath = 'demo/data/'
 rng = np.random.RandomState(1994)
 
 
+def set_base_margin_info(DType, DMatrixT, tm: str):
+    rng = np.random.default_rng()
+    X = DType(rng.normal(0, 1.0, size=100).astype(np.float32).reshape(50, 2))
+    if hasattr(X, "iloc"):
+        y = X.iloc[:, 0]
+    else:
+        y = X[:, 0]
+    base_margin = X
+    # no error at set
+    Xy = DMatrixT(X, y, base_margin=base_margin)
+    # Error at train, caused by check in predictor.
+    with pytest.raises(ValueError, match=r".*base_margin.*"):
+        xgb.train({"tree_method": tm}, Xy)
+
+    if not hasattr(X, "iloc"):
+        # column major matrix
+        got = DType(Xy.get_base_margin().reshape(50, 2))
+        assert (got == base_margin).all()
+
+        assert base_margin.T.flags.c_contiguous is False
+        assert base_margin.T.flags.f_contiguous is True
+        Xy.set_info(base_margin=base_margin.T)
+        got = DType(Xy.get_base_margin().reshape(2, 50))
+        assert (got == base_margin.T).all()
+
+        # Row vs col vec.
+        base_margin = y
+        Xy.set_base_margin(base_margin)
+        bm_col = Xy.get_base_margin()
+        Xy.set_base_margin(base_margin.reshape(1, base_margin.size))
+        bm_row = Xy.get_base_margin()
+        assert (bm_row == bm_col).all()
+
+        # type
+        base_margin = base_margin.astype(np.float64)
+        Xy.set_base_margin(base_margin)
+        bm_f64 = Xy.get_base_margin()
+        assert (bm_f64 == bm_col).all()
+
+        # too many dimensions
+        base_margin = X.reshape(2, 5, 2, 5)
+        with pytest.raises(ValueError, match=r".*base_margin.*"):
+            Xy.set_base_margin(base_margin)
+
+
 class TestDMatrix:
     def test_warn_missing(self):
         from xgboost import data
@@ -122,7 +167,8 @@ class TestDMatrix:
 
         # base margin is per-class in multi-class classifier
         base_margin = rng.randn(100, 3).astype(np.float32)
-        d.set_base_margin(base_margin.flatten())
+        d.set_base_margin(base_margin)
+        np.testing.assert_allclose(d.get_base_margin().reshape(100, 3), base_margin)
 
         ridxs = [1, 2, 3, 4, 5, 6]
         sliced = d.slice(ridxs)
@@ -136,7 +182,7 @@ class TestDMatrix:
         # Slicing a DMatrix results into a DMatrix that's equivalent to a DMatrix that's
         # constructed from the corresponding NumPy slice
         d2 = xgb.DMatrix(X[1:7, :], y[1:7])
-        d2.set_base_margin(base_margin[1:7, :].flatten())
+        d2.set_base_margin(base_margin[1:7, :])
         eval_res = {}
         _ = xgb.train(
             {'num_class': 3, 'objective': 'multi:softprob',
@@ -239,6 +285,10 @@ class TestDMatrix:
         dtrain.get_float_info('base_margin')
         dtrain.get_uint_info('group_ptr')
 
+        group_len = np.array([2, 3, 4])
+        dtrain.set_group(group_len)
+        np.testing.assert_equal(group_len, dtrain.get_group())
+
     def test_qid(self):
         rows = 100
         cols = 10
@@ -262,7 +312,7 @@ class TestDMatrix:
         m.set_info(feature_weights=fw)
         np.testing.assert_allclose(fw, m.get_float_info('feature_weights'))
         # Handle empty
-        m.set_info(feature_weights=np.empty((0, 0)))
+        m.set_info(feature_weights=np.empty((0, )))
 
         assert m.get_float_info('feature_weights').shape[0] == 0
 
@@ -380,3 +430,6 @@ class TestDMatrix:
         feature_types = ["q"] * 5 + ["c"] + ["q"] * 120
         Xy = xgb.DMatrix(path + "?indexing_mode=1", feature_types=feature_types)
         np.testing.assert_equal(np.array(Xy.feature_types), np.array(feature_types))
+
+    def test_base_margin(self):
+        set_base_margin_info(np.asarray, xgb.DMatrix, "hist")

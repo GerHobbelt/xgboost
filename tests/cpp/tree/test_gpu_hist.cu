@@ -254,15 +254,15 @@ TEST(GpuHist, EvaluateRootSplit) {
   std::vector<float> feature_weights;
 
   maker.column_sampler.Init(kNCols, feature_weights, param.colsample_bynode,
-                            param.colsample_bylevel, param.colsample_bytree,
-                            false);
+                            param.colsample_bylevel, param.colsample_bytree);
 
   RegTree tree;
   MetaInfo info;
   info.num_row_ = kNRows;
   info.num_col_ = kNCols;
 
-  DeviceSplitCandidate res = maker.EvaluateRootSplit({6.4f, 12.8f});
+  DeviceSplitCandidate res =
+      maker.EvaluateRootSplit({6.4f, 12.8f}, 0).split;
 
   ASSERT_EQ(res.findex, 7);
   ASSERT_NEAR(res.fvalue, 0.26, xgboost::kRtEps);
@@ -275,7 +275,8 @@ void TestHistogramIndexImpl() {
   int constexpr kNRows = 1000, kNCols = 10;
 
   // Build 2 matrices and build a histogram maker with that
-  tree::GPUHistMakerSpecialised<GradientPairPrecise> hist_maker, hist_maker_ext;
+  tree::GPUHistMakerSpecialised<GradientPairPrecise> hist_maker{ObjInfo{ObjInfo::kRegression}},
+      hist_maker_ext{ObjInfo{ObjInfo::kRegression}};
   std::unique_ptr<DMatrix> hist_maker_dmat(
     CreateSparsePageDMatrixWithRC(kNRows, kNCols, 0, true));
 
@@ -314,57 +315,6 @@ TEST(GpuHist, TestHistogramIndex) {
   TestHistogramIndexImpl();
 }
 
-// gamma is an alias of min_split_loss
-int32_t TestMinSplitLoss(DMatrix* dmat, float gamma, HostDeviceVector<GradientPair>* gpair) {
-  Args args {
-    {"max_depth", "1"},
-    {"max_leaves", "0"},
-
-    // Disable all other parameters.
-    {"colsample_bynode", "1"},
-    {"colsample_bylevel", "1"},
-    {"colsample_bytree", "1"},
-    {"min_child_weight", "0.01"},
-    {"reg_alpha", "0"},
-    {"reg_lambda", "0"},
-    {"max_delta_step", "0"},
-
-    // test gamma
-    {"gamma", std::to_string(gamma)}
-  };
-
-  tree::GPUHistMakerSpecialised<GradientPairPrecise> hist_maker;
-  GenericParameter generic_param(CreateEmptyGenericParam(0));
-  hist_maker.Configure(args, &generic_param);
-
-  RegTree tree;
-  hist_maker.Update(gpair, dmat, {&tree});
-
-  auto n_nodes = tree.NumExtraNodes();
-  return n_nodes;
-}
-
-TEST(GpuHist, MinSplitLoss) {
-  constexpr size_t kRows = 32;
-  constexpr size_t kCols = 16;
-  constexpr float kSparsity = 0.6;
-  auto dmat = RandomDataGenerator(kRows, kCols, kSparsity).Seed(3).GenerateDMatrix();
-  auto gpair = GenerateRandomGradients(kRows);
-
-  {
-    int32_t n_nodes = TestMinSplitLoss(dmat.get(), 0.01, &gpair);
-    // This is not strictly verified, meaning the numeber `2` is whatever GPU_Hist retured
-    // when writing this test, and only used for testing larger gamma (below) does prevent
-    // building tree.
-    ASSERT_EQ(n_nodes, 2);
-  }
-  {
-    int32_t n_nodes = TestMinSplitLoss(dmat.get(), 100.0, &gpair);
-    // No new nodes with gamma == 100.
-    ASSERT_EQ(n_nodes, static_cast<decltype(n_nodes)>(0));
-  }
-}
-
 void UpdateTree(HostDeviceVector<GradientPair>* gpair, DMatrix* dmat,
                 size_t gpu_page_size, RegTree* tree,
                 HostDeviceVector<bst_float>* preds, float subsample = 1.0f,
@@ -394,15 +344,13 @@ void UpdateTree(HostDeviceVector<GradientPair>* gpair, DMatrix* dmat,
       {"sampling_method", sampling_method},
   };
 
-  tree::GPUHistMakerSpecialised<GradientPairPrecise> hist_maker;
+  tree::GPUHistMakerSpecialised<GradientPairPrecise> hist_maker{ObjInfo{ObjInfo::kRegression}};
   GenericParameter generic_param(CreateEmptyGenericParam(0));
   hist_maker.Configure(args, &generic_param);
 
   hist_maker.Update(gpair, dmat, {tree});
-  hist_maker.UpdatePredictionCache(
-      dmat,
-      VectorView<float>{
-          MatrixView<float>(preds, {preds->Size(), 1}, preds->DeviceIdx()), 0});
+  auto cache = linalg::VectorView<float>{preds->DeviceSpan(), {preds->Size()}, 0};
+  hist_maker.UpdatePredictionCache(dmat, cache);
 }
 
 TEST(GpuHist, UniformSampling) {
@@ -469,13 +417,14 @@ TEST(GpuHist, ExternalMemory) {
   constexpr size_t kCols = 2;
   constexpr size_t kPageSize = 1024;
 
-  // Create an in-memory DMatrix.
-  std::unique_ptr<DMatrix> dmat(CreateSparsePageDMatrixWithRC(kRows, kCols, 0, true));
+  dmlc::TemporaryDirectory tmpdir;
 
   // Create a DMatrix with multiple batches.
-  dmlc::TemporaryDirectory tmpdir;
-  std::unique_ptr<DMatrix>
-      dmat_ext(CreateSparsePageDMatrixWithRC(kRows, kCols, kPageSize, true, tmpdir));
+  std::unique_ptr<DMatrix> dmat_ext(
+      CreateSparsePageDMatrix(kRows, kCols, kRows / kPageSize, tmpdir.path + "/cache"));
+
+  // Create a single batch DMatrix.
+  std::unique_ptr<DMatrix> dmat(CreateSparsePageDMatrix(kRows, kCols, 1, tmpdir.path + "/cache"));
 
   auto gpair = GenerateRandomGradients(kRows);
 
@@ -504,13 +453,14 @@ TEST(GpuHist, ExternalMemoryWithSampling) {
   const std::string kSamplingMethod = "gradient_based";
   common::GlobalRandom().seed(0);
 
-  // Create an in-memory DMatrix.
-  std::unique_ptr<DMatrix> dmat(CreateSparsePageDMatrixWithRC(kRows, kCols, 0, true));
+  dmlc::TemporaryDirectory tmpdir;
+
+  // Create a single batch DMatrix.
+  std::unique_ptr<DMatrix> dmat(CreateSparsePageDMatrix(kRows, kCols, 1, tmpdir.path + "/cache"));
 
   // Create a DMatrix with multiple batches.
-  dmlc::TemporaryDirectory tmpdir;
-  std::unique_ptr<DMatrix>
-      dmat_ext(CreateSparsePageDMatrixWithRC(kRows, kCols, kPageSize, true, tmpdir));
+  std::unique_ptr<DMatrix> dmat_ext(
+      CreateSparsePageDMatrix(kRows, kCols, kRows / kPageSize, tmpdir.path + "/cache"));
 
   auto gpair = GenerateRandomGradients(kRows);
 
@@ -539,7 +489,8 @@ TEST(GpuHist, ExternalMemoryWithSampling) {
 
 TEST(GpuHist, ConfigIO) {
   GenericParameter generic_param(CreateEmptyGenericParam(0));
-  std::unique_ptr<TreeUpdater> updater {TreeUpdater::Create("grow_gpu_hist", &generic_param) };
+  std::unique_ptr<TreeUpdater> updater{
+      TreeUpdater::Create("grow_gpu_hist", &generic_param, ObjInfo{ObjInfo::kRegression})};
   updater->Configure(Args{});
 
   Json j_updater { Object() };

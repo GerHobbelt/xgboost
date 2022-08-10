@@ -5,10 +5,8 @@ Contributors: https://github.com/dmlc/xgboost/blob/master/CONTRIBUTORS.md
 """
 
 import os
-import sys
-import warnings
 
-from .core import DMatrix, DeviceQuantileDMatrix, Booster, DataIter
+from .core import DMatrix, DeviceQuantileDMatrix, Booster, DataIter, build_info
 from .training import train, cv
 from . import rabit  # noqa
 from . import tracker  # noqa
@@ -23,20 +21,34 @@ try:
 except ImportError:
     pass
 
-if sys.version_info[:2] == (3, 5):
-    warnings.warn(
-        'Python 3.5 support is deprecated; XGBoost will require Python 3.6+ in the near future. ' +
-        'Consider upgrading to Python 3.6+.',
-        FutureWarning)
-
-VERSION_FILE = os.path.join(os.path.dirname(__file__), 'VERSION')
+VERSION_FILE = os.path.join(os.path.dirname(__file__), "VERSION")
 with open(VERSION_FILE, encoding="ascii") as f:
     __version__ = f.read().strip()
 
-__all__ = ['DMatrix', 'DeviceQuantileDMatrix', 'Booster', 'DataIter',
-           'train', 'cv',
-           'RabitTracker',
-           'XGBModel', 'XGBClassifier', 'XGBRegressor', 'XGBRanker',
-           'XGBRFClassifier', 'XGBRFRegressor',
-           'plot_importance', 'plot_tree', 'to_graphviz', 'dask',
-           'set_config', 'get_config', 'config_context']
+__all__ = [
+    # core
+    "DMatrix",
+    "DeviceQuantileDMatrix",
+    "Booster",
+    "DataIter",
+    "train",
+    "cv",
+    # utilities
+    "RabitTracker",
+    "build_info",
+    "plot_importance",
+    "plot_tree",
+    "to_graphviz",
+    "set_config",
+    "get_config",
+    "config_context",
+    # sklearn
+    "XGBModel",
+    "XGBClassifier",
+    "XGBRegressor",
+    "XGBRanker",
+    "XGBRFClassifier",
+    "XGBRFRegressor",
+    # dask
+    "dask",
+]

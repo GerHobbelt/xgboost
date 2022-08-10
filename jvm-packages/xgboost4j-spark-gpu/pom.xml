@@ -6,7 +6,7 @@
     <parent>
         <groupId>ai.h2o</groupId>
         <artifactId>xgboost-jvm_2.12</artifactId>
-        <version>1.5.2</version>
+        <version>1.6.1</version>
     </parent>
     <artifactId>xgboost4j-spark-gpu_2.12</artifactId>
     <build>
@@ -24,7 +24,7 @@
         <dependency>
             <groupId>ml.dmlc</groupId>
             <artifactId>xgboost4j-gpu_${scala.binary.version}</artifactId>
-            <version>1.5.2</version>
+            <version>1.6.1</version>
         </dependency>
         <dependency>
             <groupId>org.apache.spark</groupId>
@@ -43,6 +43,19 @@
             <artifactId>spark-mllib_${scala.binary.version}</artifactId>
             <version>${spark.version}</version>
             <scope>provided</scope>
+        </dependency>
+        <dependency>
+          <groupId>ai.rapids</groupId>
+          <artifactId>cudf</artifactId>
+          <version>${cudf.version}</version>
+          <classifier>${cudf.classifier}</classifier>
+          <scope>provided</scope>
+        </dependency>
+        <dependency>
+          <groupId>com.nvidia</groupId>
+          <artifactId>rapids-4-spark_${scala.binary.version}</artifactId>
+          <version>${spark.rapids.version}</version>
+          <scope>provided</scope>
         </dependency>
     </dependencies>
 </project>

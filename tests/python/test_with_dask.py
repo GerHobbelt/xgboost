@@ -1,3 +1,4 @@
+"""Copyright 2019-2022 XGBoost contributors"""
 from pathlib import Path
 import pickle
 import testing as tm
@@ -29,6 +30,7 @@ if tm.no_dask()['condition']:
     pytest.skip(msg=tm.no_dask()['reason'], allow_module_level=True)
 
 from distributed import LocalCluster, Client
+import dask
 import dask.dataframe as dd
 import dask.array as da
 from xgboost.dask import DaskDMatrix
@@ -40,10 +42,10 @@ else:
     suppress = hypothesis.utils.conventions.not_set  # type:ignore
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def cluster():
     with LocalCluster(
-        n_workers=2, threads_per_worker=2, dashboard_address=None
+        n_workers=2, threads_per_worker=2, dashboard_address=":0"
     ) as dask_cluster:
         yield dask_cluster
 
@@ -64,6 +66,49 @@ def _get_client_workers(client: "Client") -> List[str]:
     return list(workers.keys())
 
 
+def make_categorical(
+    client: Client,
+    n_samples: int,
+    n_features: int,
+    n_categories: int,
+    onehot: bool = False,
+) -> Tuple[dd.DataFrame, dd.Series]:
+    workers = _get_client_workers(client)
+    n_workers = len(workers)
+    dfs = []
+
+    def pack(**kwargs: Any) -> dd.DataFrame:
+        X, y = tm.make_categorical(**kwargs)
+        X["label"] = y
+        return X
+
+    meta = pack(
+        n_samples=1, n_features=n_features, n_categories=n_categories, onehot=False
+    )
+
+    for i, worker in enumerate(workers):
+        l_n_samples = min(
+            n_samples // n_workers, n_samples - i * (n_samples // n_workers)
+        )
+        future = client.submit(
+            pack,
+            n_samples=l_n_samples,
+            n_features=n_features,
+            n_categories=n_categories,
+            onehot=False,
+            workers=[worker],
+        )
+        dfs.append(future)
+
+    df = dd.from_delayed(dfs, meta=meta)
+    y = df["label"]
+    X = df[df.columns.difference(["label"])]
+
+    if onehot:
+        return dd.get_dummies(X), y
+    return X, y
+
+
 def generate_array(
         with_weights: bool = False
 ) -> Tuple[xgb.dask._DaskCollection, xgb.dask._DaskCollection,
@@ -79,7 +124,7 @@ def generate_array(
 
 
 def test_from_dask_dataframe() -> None:
-    with LocalCluster(n_workers=kWorkers) as cluster:
+    with LocalCluster(n_workers=kWorkers, dashboard_address=":0") as cluster:
         with Client(cluster) as client:
             X, y, _ = generate_array()
 
@@ -122,7 +167,9 @@ def test_from_dask_dataframe() -> None:
 
 
 def test_from_dask_array() -> None:
-    with LocalCluster(n_workers=kWorkers, threads_per_worker=5) as cluster:
+    with LocalCluster(
+        n_workers=kWorkers, threads_per_worker=5, dashboard_address=":0"
+    ) as cluster:
         with Client(cluster) as client:
             X, y, _ = generate_array()
             dtrain = DaskDMatrix(client, X, y)
@@ -136,20 +183,128 @@ def test_from_dask_array() -> None:
             # force prediction to be computed
             prediction = prediction.compute()
 
-            booster: xgb.Booster = result['booster']
-            single_node_predt = booster.predict(
-                xgb.DMatrix(X.compute())
-            )
+            booster: xgb.Booster = result["booster"]
+            single_node_predt = booster.predict(xgb.DMatrix(X.compute()))
             np.testing.assert_allclose(prediction, single_node_predt)
 
             config = json.loads(booster.save_config())
-            assert int(config['learner']['generic_param']['nthread']) == 5
+            assert int(config["learner"]["generic_param"]["nthread"]) == 5
 
-            from_arr = xgb.dask.predict(
-                client, model=booster, data=X)
+            from_arr = xgb.dask.predict(client, model=booster, data=X)
 
             assert isinstance(from_arr, da.Array)
             assert np.all(single_node_predt == from_arr.compute())
+
+
+def test_dask_sparse(client: "Client") -> None:
+    X_, y_ = make_classification(n_samples=1000, n_informative=5, n_classes=3)
+    rng = np.random.default_rng(seed=0)
+    idx = rng.integers(low=0, high=X_.shape[0], size=X_.shape[0] // 4)
+    X_[idx, :] = np.nan
+
+    # numpy
+    X, y = da.from_array(X_), da.from_array(y_)
+    clf = xgb.dask.DaskXGBClassifier(tree_method="hist", n_estimators=10)
+    clf.client = client
+    clf.fit(X, y, eval_set=[(X, y)])
+    dense_results = clf.evals_result()
+
+    # scipy sparse
+    X, y = da.from_array(X_).map_blocks(scipy.sparse.csr_matrix), da.from_array(y_)
+    clf = xgb.dask.DaskXGBClassifier(tree_method="hist", n_estimators=10)
+    clf.client = client
+    clf.fit(X, y, eval_set=[(X, y)])
+    sparse_results = clf.evals_result()
+    np.testing.assert_allclose(
+        dense_results["validation_0"]["mlogloss"], sparse_results["validation_0"]["mlogloss"]
+    )
+
+
+def run_categorical(client: "Client", tree_method: str, X, X_onehot, y) -> None:
+    parameters = {"tree_method": tree_method, "max_cat_to_onehot": 9999} # force onehot
+    rounds = 10
+    m = xgb.dask.DaskDMatrix(client, X_onehot, y, enable_categorical=True)
+    by_etl_results = xgb.dask.train(
+        client,
+        parameters,
+        m,
+        num_boost_round=rounds,
+        evals=[(m, "Train")],
+    )["history"]
+
+    m = xgb.dask.DaskDMatrix(client, X, y, enable_categorical=True)
+    output = xgb.dask.train(
+        client,
+        parameters,
+        m,
+        num_boost_round=rounds,
+        evals=[(m, "Train")],
+    )
+    by_builtin_results = output["history"]
+
+    np.testing.assert_allclose(
+        np.array(by_etl_results["Train"]["rmse"]),
+        np.array(by_builtin_results["Train"]["rmse"]),
+        rtol=1e-3,
+    )
+    assert tm.non_increasing(by_builtin_results["Train"]["rmse"])
+
+    def check_model_output(model: xgb.dask.Booster) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = os.path.join(tempdir, "model.json")
+            model.save_model(path)
+            with open(path, "r") as fd:
+                categorical = json.load(fd)
+
+            categories_sizes = np.array(
+                categorical["learner"]["gradient_booster"]["model"]["trees"][-1][
+                    "categories_sizes"
+                ]
+            )
+            assert categories_sizes.shape[0] != 0
+            np.testing.assert_allclose(categories_sizes, 1)
+
+    check_model_output(output["booster"])
+    reg = xgb.dask.DaskXGBRegressor(
+        enable_categorical=True,
+        n_estimators=10,
+        tree_method=tree_method,
+        # force onehot
+        max_cat_to_onehot=9999
+    )
+    reg.fit(X, y)
+
+    check_model_output(reg.get_booster())
+
+    reg = xgb.dask.DaskXGBRegressor(
+        enable_categorical=True, n_estimators=10
+    )
+    with pytest.raises(ValueError):
+        reg.fit(X, y)
+    # check partition based
+    reg = xgb.dask.DaskXGBRegressor(
+        enable_categorical=True, n_estimators=10, tree_method=tree_method
+    )
+    reg.fit(X, y, eval_set=[(X, y)])
+    assert tm.non_increasing(reg.evals_result()["validation_0"]["rmse"])
+
+    booster = reg.get_booster()
+    predt = xgb.dask.predict(client, booster, X).compute().values
+    inpredt = xgb.dask.inplace_predict(client, booster, X).compute().values
+
+    if hasattr(predt, "get"):
+        predt = predt.get()
+    if hasattr(inpredt, "get"):
+        inpredt = inpredt.get()
+
+    np.testing.assert_allclose(predt, inpredt)
+
+
+def test_categorical(client: "Client") -> None:
+    X, y = make_categorical(client, 10000, 30, 13)
+    X_onehot, _ = make_categorical(client, 10000, 30, 13, True)
+    run_categorical(client, "approx", X, X_onehot, y)
+    run_categorical(client, "hist", X, X_onehot, y)
 
 
 def test_dask_predict_shape_infer(client: "Client") -> None:
@@ -182,27 +337,74 @@ def test_dask_predict_shape_infer(client: "Client") -> None:
     assert prediction.shape[1] == 3
 
 
+def run_boost_from_prediction_multi_class(
+    X: xgb.dask._DaskCollection,
+    y: xgb.dask._DaskCollection,
+    tree_method: str,
+    client: "Client",
+) -> None:
+    model_0 = xgb.dask.DaskXGBClassifier(
+        learning_rate=0.3, n_estimators=4, tree_method=tree_method, max_bin=768
+    )
+    model_0.fit(X=X, y=y)
+    margin = xgb.dask.inplace_predict(
+        client, model_0.get_booster(), X, predict_type="margin"
+    )
+
+    model_1 = xgb.dask.DaskXGBClassifier(
+        learning_rate=0.3, n_estimators=4, tree_method=tree_method, max_bin=768
+    )
+    model_1.fit(X=X, y=y, base_margin=margin)
+    predictions_1 = xgb.dask.predict(
+        client,
+        model_1.get_booster(),
+        xgb.dask.DaskDMatrix(client, X, base_margin=margin),
+        output_margin=True,
+    )
+
+    model_2 = xgb.dask.DaskXGBClassifier(
+        learning_rate=0.3, n_estimators=8, tree_method=tree_method, max_bin=768
+    )
+    model_2.fit(X=X, y=y)
+    predictions_2 = xgb.dask.inplace_predict(
+        client, model_2.get_booster(), X, predict_type="margin"
+    )
+    a = predictions_1.compute()
+    b = predictions_2.compute()
+    # cupy/cudf
+    if hasattr(a, "get"):
+        a = a.get()
+    if hasattr(b, "values"):
+        b = b.values
+    if hasattr(b, "get"):
+        b = b.get()
+    np.testing.assert_allclose(a, b, atol=1e-5)
+
+
 def run_boost_from_prediction(
-    X: xgb.dask._DaskCollection, y: xgb.dask._DaskCollection, tree_method: str, client: "Client"
+    X: xgb.dask._DaskCollection,
+    y: xgb.dask._DaskCollection,
+    tree_method: str,
+    client: "Client",
 ) -> None:
     X = client.persist(X)
     y = client.persist(y)
 
     model_0 = xgb.dask.DaskXGBClassifier(
-        learning_rate=0.3, random_state=0, n_estimators=4,
-        tree_method=tree_method)
+        learning_rate=0.3, n_estimators=4, tree_method=tree_method, max_bin=512
+    )
     model_0.fit(X=X, y=y)
     margin = model_0.predict(X, output_margin=True)
 
     model_1 = xgb.dask.DaskXGBClassifier(
-        learning_rate=0.3, random_state=0, n_estimators=4,
-        tree_method=tree_method)
+        learning_rate=0.3, n_estimators=4, tree_method=tree_method, max_bin=512
+    )
     model_1.fit(X=X, y=y, base_margin=margin)
     predictions_1 = model_1.predict(X, base_margin=margin)
 
     cls_2 = xgb.dask.DaskXGBClassifier(
-        learning_rate=0.3, random_state=0, n_estimators=8,
-        tree_method=tree_method)
+        learning_rate=0.3, n_estimators=8, tree_method=tree_method, max_bin=512
+    )
     cls_2.fit(X=X, y=y)
     predictions_2 = cls_2.predict(X)
 
@@ -216,8 +418,8 @@ def run_boost_from_prediction(
     unmargined = xgb.dask.DaskXGBClassifier(n_estimators=4)
     unmargined.fit(X=X, y=y, eval_set=[(X, y)], base_margin=margin)
 
-    margined_res = margined.evals_result()['validation_0']['logloss']
-    unmargined_res = unmargined.evals_result()['validation_0']['logloss']
+    margined_res = margined.evals_result()["validation_0"]["logloss"]
+    unmargined_res = unmargined.evals_result()["validation_0"]["logloss"]
 
     assert len(margined_res) == len(unmargined_res)
     for i in range(len(margined_res)):
@@ -227,15 +429,19 @@ def run_boost_from_prediction(
 
 @pytest.mark.parametrize("tree_method", ["hist", "approx"])
 def test_boost_from_prediction(tree_method: str, client: "Client") -> None:
-    from sklearn.datasets import load_breast_cancer
+    from sklearn.datasets import load_breast_cancer, load_digits
     X_, y_ = load_breast_cancer(return_X_y=True)
-    X, y = dd.from_array(X_, chunksize=100), dd.from_array(y_, chunksize=100)
+    X, y = dd.from_array(X_, chunksize=200), dd.from_array(y_, chunksize=200)
     run_boost_from_prediction(X, y, tree_method, client)
+
+    X_, y_ = load_digits(return_X_y=True)
+    X, y = dd.from_array(X_, chunksize=100), dd.from_array(y_, chunksize=100)
+    run_boost_from_prediction_multi_class(X, y, tree_method, client)
 
 
 def test_inplace_predict(client: "Client") -> None:
-    from sklearn.datasets import load_boston
-    X_, y_ = load_boston(return_X_y=True)
+    from sklearn.datasets import fetch_california_housing
+    X_, y_ = fetch_california_housing(return_X_y=True)
     X, y = dd.from_array(X_, chunksize=32), dd.from_array(y_, chunksize=32)
     reg = xgb.dask.DaskXGBRegressor(n_estimators=4).fit(X, y)
     booster = reg.get_booster()
@@ -324,7 +530,7 @@ def test_dask_regressor(model: str, client: "Client") -> None:
     forest = int(
         json.loads(regressor.get_booster().save_config())["learner"][
             "gradient_booster"
-        ]["gbtree_train_param"]["num_parallel_tree"]
+        ]["gbtree_model_param"]["num_parallel_tree"]
     )
 
     if model == "boosting":
@@ -372,10 +578,13 @@ def run_dask_classifier(
     assert list(history.keys())[0] == "validation_0"
     assert list(history["validation_0"].keys())[0] == metric
     assert len(list(history["validation_0"])) == 1
+
+    config = json.loads(classifier.get_booster().save_config())
+    n_threads = int(config["learner"]["generic_param"]["nthread"])
+    assert n_threads != 0 and n_threads != os.cpu_count()
+
     forest = int(
-        json.loads(classifier.get_booster().save_config())["learner"][
-            "gradient_booster"
-        ]["gbtree_train_param"]["num_parallel_tree"]
+        config["learner"]["gradient_booster"]["gbtree_model_param"]["num_parallel_tree"]
     )
     if model == "boosting":
         assert len(history["validation_0"][metric]) == 2
@@ -400,6 +609,7 @@ def run_dask_classifier(
             np.testing.assert_allclose(single_node_proba, probas)
         else:
             import cupy
+
             cupy.testing.assert_allclose(single_node_proba, probas)
 
     # Test with dataframe, not shared with GPU as cupy doesn't work well with da.unique.
@@ -429,33 +639,16 @@ def test_dask_classifier(model: str, client: "Client") -> None:
     run_dask_classifier(X, y_bin, w, model, None, client, 2)
 
 
-@pytest.mark.skipif(**tm.no_sklearn())
-def test_sklearn_grid_search(client: "Client") -> None:
-    from sklearn.model_selection import GridSearchCV
-    X, y, _ = generate_array()
-    reg = xgb.dask.DaskXGBRegressor(learning_rate=0.1,
-                                    tree_method='hist')
-    reg.client = client
-    model = GridSearchCV(reg, {'max_depth': [2, 4],
-                               'n_estimators': [5, 10]},
-                         cv=2, verbose=1)
-    model.fit(X, y)
-    # Expect unique results for each parameter value This confirms
-    # sklearn is able to successfully update the parameter
-    means = model.cv_results_['mean_test_score']
-    assert len(means) == len(set(means))
-
-
 def test_empty_dmatrix_training_continuation(client: "Client") -> None:
     kRows, kCols = 1, 97
     X = dd.from_array(np.random.randn(kRows, kCols))
     y = dd.from_array(np.random.rand(kRows))
-    X.columns = ['X' + str(i) for i in range(0, 97)]
+    X.columns = ['X' + str(i) for i in range(0, kCols)]
     dtrain = xgb.dask.DaskDMatrix(client, X, y)
 
     kRows += 1000
     X = dd.from_array(np.random.randn(kRows, kCols), chunksize=10)
-    X.columns = ['X' + str(i) for i in range(0, 97)]
+    X.columns = ['X' + str(i) for i in range(0, kCols)]
     y = dd.from_array(np.random.rand(kRows), chunksize=10)
     valid = xgb.dask.DaskDMatrix(client, X, y)
 
@@ -587,7 +780,7 @@ def run_empty_dmatrix_auc(client: "Client", tree_method: str, n_workers: int) ->
     cls = xgb.dask.DaskXGBClassifier(
         tree_method=tree_method, n_estimators=2, use_label_encoder=False
     )
-    cls.fit(X, y, eval_metric="auc", eval_set=[(valid_X, valid_y)])
+    cls.fit(X, y, eval_metric=["auc", "aucpr"], eval_set=[(valid_X, valid_y)])
 
     # multiclass
     X_, y_ = make_classification(
@@ -618,11 +811,11 @@ def run_empty_dmatrix_auc(client: "Client", tree_method: str, n_workers: int) ->
     cls = xgb.dask.DaskXGBClassifier(
         tree_method=tree_method, n_estimators=2, use_label_encoder=False
     )
-    cls.fit(X, y, eval_metric="auc", eval_set=[(valid_X, valid_y)])
+    cls.fit(X, y, eval_metric=["auc", "aucpr"], eval_set=[(valid_X, valid_y)])
 
 
 def test_empty_dmatrix_auc() -> None:
-    with LocalCluster(n_workers=8) as cluster:
+    with LocalCluster(n_workers=8, dashboard_address=":0") as cluster:
         with Client(cluster) as client:
             run_empty_dmatrix_auc(client, "hist", 8)
 
@@ -664,20 +857,14 @@ def run_auc(client: "Client", tree_method: str) -> None:
 def test_auc(client: "Client") -> None:
     run_auc(client, "hist")
 
+
 # No test for Exact, as empty DMatrix handling are mostly for distributed
 # environment and Exact doesn't support it.
-def test_empty_dmatrix_hist() -> None:
-    with LocalCluster(n_workers=kWorkers) as cluster:
+@pytest.mark.parametrize("tree_method", ["hist", "approx"])
+def test_empty_dmatrix(tree_method) -> None:
+    with LocalCluster(n_workers=kWorkers, dashboard_address=":0") as cluster:
         with Client(cluster) as client:
-            parameters = {'tree_method': 'hist'}
-            run_empty_dmatrix_reg(client, parameters)
-            run_empty_dmatrix_cls(client, parameters)
-
-
-def test_empty_dmatrix_approx() -> None:
-    with LocalCluster(n_workers=kWorkers) as cluster:
-        with Client(cluster) as client:
-            parameters = {'tree_method': 'approx'}
+            parameters = {'tree_method': tree_method}
             run_empty_dmatrix_reg(client, parameters)
             run_empty_dmatrix_cls(client, parameters)
 
@@ -769,7 +956,7 @@ async def run_dask_classifier_asyncio(scheduler_address: str) -> None:
 
 
 def test_with_asyncio() -> None:
-    with LocalCluster() as cluster:
+    with LocalCluster(dashboard_address=":0") as cluster:
         with Client(cluster) as client:
             address = client.scheduler.address
             output = asyncio.run(run_from_dask_array_asyncio(address))
@@ -782,16 +969,16 @@ def test_with_asyncio() -> None:
 
 async def generate_concurrent_trainings() -> None:
     async def train() -> None:
-        async with LocalCluster(n_workers=2,
-                                threads_per_worker=1,
-                                asynchronous=True,
-                                dashboard_address=0) as cluster:
+        async with LocalCluster(
+            n_workers=2, threads_per_worker=1, asynchronous=True, dashboard_address=":0"
+        ) as cluster:
             async with Client(cluster, asynchronous=True) as client:
                 X, y, w = generate_array(with_weights=True)
                 dtrain = await DaskDMatrix(client, X, y, weight=w)
                 dvalid = await DaskDMatrix(client, X, y, weight=w)
                 output = await xgb.dask.train(client, {}, dtrain=dtrain)
                 await xgb.dask.predict(client, output, data=dvalid)
+
     await asyncio.gather(train(), train())
 
 
@@ -886,7 +1073,7 @@ def run_aft_survival(client: "Client", dmatrix_t: Type) -> None:
 
 
 def test_dask_aft_survival() -> None:
-    with LocalCluster(n_workers=kWorkers) as cluster:
+    with LocalCluster(n_workers=kWorkers, dashboard_address=":0") as cluster:
         with Client(cluster) as client:
             run_aft_survival(client, DaskDMatrix)
 
@@ -1052,13 +1239,21 @@ class TestWithDask:
         os.remove(before_fname)
         os.remove(after_fname)
 
+        with dask.config.set({'xgboost.foo': "bar"}):
+            with pytest.raises(ValueError):
+                xgb.dask.train(client, {}, dtrain, num_boost_round=4)
+
+        with dask.config.set({'xgboost.scheduler_address': "127.0.0.1:22"}):
+            with pytest.raises(PermissionError):
+                xgb.dask.train(client, {}, dtrain, num_boost_round=1)
+
     def run_updater_test(
-            self,
-            client: "Client",
-            params: Dict,
-            num_rounds: int,
-            dataset: tm.TestDataset,
-            tree_method: str
+        self,
+        client: "Client",
+        params: Dict,
+        num_rounds: int,
+        dataset: tm.TestDataset,
+        tree_method: str
     ) -> None:
         params['tree_method'] = tree_method
         params = dataset.set_params(params)
@@ -1068,9 +1263,9 @@ class TestWithDask:
             return
 
         chunk = 128
-        X = da.from_array(dataset.X,
-                          chunks=(chunk, dataset.X.shape[1]))
-        y = da.from_array(dataset.y, chunks=(chunk,))
+        y_chunk = chunk if len(dataset.y.shape) == 1 else (chunk, dataset.y.shape[1])
+        X = da.from_array(dataset.X, chunks=(chunk, dataset.X.shape[1]))
+        y = da.from_array(dataset.y, chunks=y_chunk)
         if dataset.w is not None:
             w = da.from_array(dataset.w, chunks=(chunk,))
         else:
@@ -1099,7 +1294,7 @@ class TestWithDask:
 
     @given(params=hist_parameter_strategy,
            dataset=tm.dataset_strategy)
-    @settings(deadline=None, suppress_health_check=suppress)
+    @settings(deadline=None, suppress_health_check=suppress, print_blob=True)
     def test_hist(
             self, params: Dict, dataset: tm.TestDataset, client: "Client"
     ) -> None:
@@ -1108,7 +1303,7 @@ class TestWithDask:
 
     @given(params=exact_parameter_strategy,
            dataset=tm.dataset_strategy)
-    @settings(deadline=None, suppress_health_check=suppress)
+    @settings(deadline=None, suppress_health_check=suppress, print_blob=True)
     def test_approx(
             self, client: "Client", params: Dict, dataset: tm.TestDataset
     ) -> None:
@@ -1121,7 +1316,7 @@ class TestWithDask:
 
         exe: Optional[str] = None
         for possible_path in {'./testxgboost', './build/testxgboost',
-                              '../build/testxgboost',
+                              '../build/cpubuild/testxgboost',
                               '../cpu-build/testxgboost'}:
             if os.path.exists(possible_path):
                 exe = possible_path
@@ -1138,16 +1333,21 @@ class TestWithDask:
             for arg in rabit_args:
                 if arg.decode('utf-8').startswith('DMLC_TRACKER_PORT'):
                     port_env = arg.decode('utf-8')
+                if arg.decode("utf-8").startswith("DMLC_TRACKER_URI"):
+                    uri_env = arg.decode("utf-8")
             port = port_env.split('=')
             env = os.environ.copy()
             env[port[0]] = port[1]
+            uri = uri_env.split("=")
+            env["DMLC_TRACKER_URI"] = uri[1]
             return subprocess.run([str(exe), test], env=env, capture_output=True)
 
-        with LocalCluster(n_workers=4) as cluster:
+        with LocalCluster(n_workers=4, dashboard_address=":0") as cluster:
             with Client(cluster) as client:
                 workers = _get_client_workers(client)
                 rabit_args = client.sync(
-                    xgb.dask._get_rabit_args, len(workers), client)
+                    xgb.dask._get_rabit_args, len(workers), None, client
+                )
                 futures = client.map(runit,
                                      workers,
                                      pure=False,
@@ -1164,11 +1364,13 @@ class TestWithDask:
     @pytest.mark.gtest
     def test_quantile_basic(self) -> None:
         self.run_quantile('DistributedBasic')
+        self.run_quantile('SortedDistributedBasic')
 
     @pytest.mark.skipif(**tm.no_dask())
     @pytest.mark.gtest
     def test_quantile(self) -> None:
         self.run_quantile('Distributed')
+        self.run_quantile('SortedDistributed')
 
     @pytest.mark.skipif(**tm.no_dask())
     @pytest.mark.gtest
@@ -1176,7 +1378,7 @@ class TestWithDask:
         self.run_quantile('SameOnAllWorkers')
 
     def test_n_workers(self) -> None:
-        with LocalCluster(n_workers=2) as cluster:
+        with LocalCluster(n_workers=2, dashboard_address=":0") as cluster:
             with Client(cluster) as client:
                 workers = _get_client_workers(client)
                 from sklearn.datasets import load_breast_cancer
@@ -1206,13 +1408,17 @@ class TestWithDask:
         for i in range(kCols):
             fw[i] *= float(i)
         fw = da.from_array(fw)
-        poly_increasing = run_feature_weights(X, y, fw, model=xgb.dask.DaskXGBRegressor)
+        poly_increasing = run_feature_weights(
+            X, y, fw, "approx", model=xgb.dask.DaskXGBRegressor
+        )
 
         fw = np.ones(shape=(kCols,))
         for i in range(kCols):
             fw[i] *= float(kCols - i)
         fw = da.from_array(fw)
-        poly_decreasing = run_feature_weights(X, y, fw, model=xgb.dask.DaskXGBRegressor)
+        poly_decreasing = run_feature_weights(
+            X, y, fw, "approx", model=xgb.dask.DaskXGBRegressor
+        )
 
         # Approxmated test, this is dependent on the implementation of random
         # number generator in std library.
@@ -1222,8 +1428,8 @@ class TestWithDask:
     @pytest.mark.skipif(**tm.no_dask())
     @pytest.mark.skipif(**tm.no_sklearn())
     def test_custom_objective(self, client: "Client") -> None:
-        from sklearn.datasets import load_boston
-        X, y = load_boston(return_X_y=True)
+        from sklearn.datasets import fetch_california_housing
+        X, y = fetch_california_housing(return_X_y=True)
         X, y = da.from_array(X), da.from_array(y)
         rounds = 20
 
@@ -1263,18 +1469,22 @@ class TestWithDask:
         generate unnecessary copies of data.
 
         '''
-        with LocalCluster(n_workers=2) as cluster:
+        with LocalCluster(n_workers=2, dashboard_address=":0") as cluster:
             with Client(cluster) as client:
                 X, y, _ = generate_array()
                 n_partitions = X.npartitions
                 m = xgb.dask.DaskDMatrix(client, X, y)
                 workers = _get_client_workers(client)
-                rabit_args = client.sync(xgb.dask._get_rabit_args, len(workers), client)
+                rabit_args = client.sync(
+                    xgb.dask._get_rabit_args, len(workers), None, client
+                )
                 n_workers = len(workers)
 
                 def worker_fn(worker_addr: str, data_ref: Dict) -> None:
                     with xgb.dask.RabitContext(rabit_args):
-                        local_dtrain = xgb.dask._dmatrix_from_list_of_parts(**data_ref)
+                        local_dtrain = xgb.dask._dmatrix_from_list_of_parts(
+                            **data_ref, nthread=7
+                        )
                         total = np.array([local_dtrain.num_row()])
                         total = xgb.rabit.allreduce(total, xgb.rabit.Op.SUM)
                         assert total[0] == kRows
@@ -1365,8 +1575,8 @@ class TestWithDask:
         assert np.allclose(np.sum(shap, axis=len(shap.shape) - 1), margin, 1e-5, 1e-5)
 
     def test_shap(self, client: "Client") -> None:
-        from sklearn.datasets import load_boston, load_digits
-        X, y = load_boston(return_X_y=True)
+        from sklearn.datasets import fetch_california_housing, load_digits
+        X, y = fetch_california_housing(return_X_y=True)
         params: Dict[str, Any] = {'objective': 'reg:squarederror'}
         self.run_shap(X, y, params, client)
 
@@ -1410,8 +1620,8 @@ class TestWithDask:
                            1e-5, 1e-5)
 
     def test_shap_interactions(self, client: "Client") -> None:
-        from sklearn.datasets import load_boston
-        X, y = load_boston(return_X_y=True)
+        from sklearn.datasets import fetch_california_housing
+        X, y = fetch_california_housing(return_X_y=True)
         params = {'objective': 'reg:squarederror'}
         self.run_shap_interactions(X, y, params, client)
 
@@ -1539,10 +1749,10 @@ def run_tree_stats(client: Client, tree_method: str) -> str:
 
 @pytest.mark.parametrize("tree_method", ["hist", "approx"])
 def test_tree_stats(tree_method: str) -> None:
-    with LocalCluster(n_workers=1) as cluster:
+    with LocalCluster(n_workers=1, dashboard_address=":0") as cluster:
         with Client(cluster) as client:
             local = run_tree_stats(client, tree_method)
-    with LocalCluster(n_workers=2) as cluster:
+    with LocalCluster(n_workers=2, dashboard_address=":0") as cluster:
         with Client(cluster) as client:
             distributed = run_tree_stats(client, tree_method)
 
@@ -1558,7 +1768,7 @@ def test_parallel_submit_multi_clients() -> None:
 
     from sklearn.datasets import load_digits
 
-    with LocalCluster(n_workers=4) as cluster:
+    with LocalCluster(n_workers=4, dashboard_address=":0") as cluster:
         with Client(cluster) as client:
             workers = _get_client_workers(client)
 
@@ -1660,11 +1870,16 @@ class TestDaskCallbacks:
 
         valid_X, valid_y = load_breast_cancer(return_X_y=True)
         valid_X, valid_y = da.from_array(valid_X), da.from_array(valid_y)
-        cls = xgb.dask.DaskXGBClassifier(objective='binary:logistic', tree_method='hist',
-                                         n_estimators=1000)
+        cls = xgb.dask.DaskXGBClassifier(
+            objective='binary:logistic',
+            tree_method='hist',
+            n_estimators=1000,
+            eval_metric=tm.eval_error_metric_skl
+        )
         cls.client = client
-        cls.fit(X, y, early_stopping_rounds=early_stopping_rounds,
-                eval_set=[(valid_X, valid_y)], eval_metric=tm.eval_error_metric)
+        cls.fit(
+            X, y, early_stopping_rounds=early_stopping_rounds, eval_set=[(valid_X, valid_y)]
+        )
         booster = cls.get_booster()
         dump = booster.get_dump(dump_format='json')
         assert len(dump) - booster.best_iteration == early_stopping_rounds + 1

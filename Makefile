@@ -93,11 +93,14 @@ mypy:
 	cd python-package; \
 	mypy ./xgboost/dask.py && \
 	mypy ./xgboost/rabit.py && \
+	mypy ./xgboost/tracker.py && \
+	mypy ./xgboost/sklearn.py && \
 	mypy ../demo/guide-python/external_memory.py && \
+	mypy ../demo/guide-python/categorical.py && \
+	mypy ../demo/guide-python/cat_in_the_dat.py && \
 	mypy ../tests/python-gpu/test_gpu_with_dask.py && \
 	mypy ../tests/python/test_data_iterator.py && \
-	mypy ../tests/python-gpu/test_gpu_data_iterator.py && \
-	mypy ./xgboost/sklearn.py || exit 1; \
+	mypy ../tests/python-gpu/test_gpu_data_iterator.py  || exit 1; \
 	mypy . || true ;
 
 clean:
@@ -150,6 +153,7 @@ Rpack: clean_all
 	bash R-package/remove_warning_suppression_pragma.sh
 	bash xgboost/remove_warning_suppression_pragma.sh
 	rm xgboost/remove_warning_suppression_pragma.sh
+	rm xgboost/CMakeLists.txt
 	rm -rfv xgboost/tests/helper_scripts/
 
 R ?= R

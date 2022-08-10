@@ -20,7 +20,7 @@ TEST(SimpleDMatrix, MetaInfo) {
   EXPECT_EQ(dmat->Info().num_row_, 2);
   EXPECT_EQ(dmat->Info().num_col_, 5);
   EXPECT_EQ(dmat->Info().num_nonzero_, 6);
-  EXPECT_EQ(dmat->Info().labels_.Size(), dmat->Info().num_row_);
+  EXPECT_EQ(dmat->Info().labels.Size(), dmat->Info().num_row_);
 
   delete dmat;
 }
@@ -194,7 +194,8 @@ TEST(SimpleDMatrix, FromCSC) {
 }
 
 TEST(SimpleDMatrix, FromFile) {
-  std::string filename = "test.libsvm";
+  dmlc::TemporaryDirectory tempdir;
+  std::string filename = tempdir.path + "test.libsvm";
   CreateBigTestData(filename, 3 * 5);
   // Add an empty row at the end of the matrix
   {
@@ -253,12 +254,12 @@ TEST(SimpleDMatrix, Slice) {
   std::iota(lower.begin(), lower.end(), 0.0f);
   std::iota(upper.begin(), upper.end(), 1.0f);
 
-  auto& margin = p_m->Info().base_margin_.HostVector();
-  margin.resize(kRows * kClasses);
+  auto& margin = p_m->Info().base_margin_;
+  margin = decltype(p_m->Info().base_margin_){{kRows, kClasses}, GenericParameter::kCpuId};
 
   std::array<int32_t, 3> ridxs {1, 3, 5};
   std::unique_ptr<DMatrix> out { p_m->Slice(ridxs) };
-  ASSERT_EQ(out->Info().labels_.Size(), ridxs.size());
+  ASSERT_EQ(out->Info().labels.Size(), ridxs.size());
   ASSERT_EQ(out->Info().labels_lower_bound_.Size(), ridxs.size());
   ASSERT_EQ(out->Info().labels_upper_bound_.Size(), ridxs.size());
   ASSERT_EQ(out->Info().base_margin_.Size(), ridxs.size() * kClasses);
@@ -284,10 +285,10 @@ TEST(SimpleDMatrix, Slice) {
         ASSERT_EQ(p_m->Info().weights_.HostVector().at(ridx),
                   out->Info().weights_.HostVector().at(i));
 
-        auto& out_margin = out->Info().base_margin_.HostVector();
+        auto out_margin = out->Info().base_margin_.View(GenericParameter::kCpuId);
+        auto in_margin = margin.View(GenericParameter::kCpuId);
         for (size_t j = 0; j < kClasses; ++j) {
-          auto in_beg = ridx * kClasses;
-          ASSERT_EQ(out_margin.at(i * kClasses + j), margin.at(in_beg + j));
+          ASSERT_EQ(out_margin(i, j), in_margin(ridx, j));
         }
       }
     }

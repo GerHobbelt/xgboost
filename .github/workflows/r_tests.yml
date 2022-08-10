@@ -31,8 +31,8 @@ jobs:
       uses: actions/cache@v2
       with:
         path: ${{ env.R_LIBS_USER }}
-        key: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
-        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
+        key: ${{ runner.os }}-r-${{ matrix.config.r }}-3-${{ hashFiles('R-package/DESCRIPTION') }}
+        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-3-${{ hashFiles('R-package/DESCRIPTION') }}
 
     - name: Install dependencies
       shell: Rscript {0}
@@ -59,9 +59,9 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - {os: windows-2016, r: 'release', compiler: 'mingw', build: 'autotools'}
-          - {os: windows-2016, r: 'release', compiler: 'msvc', build: 'cmake'}
-          - {os: windows-2016, r: 'release', compiler: 'mingw', build: 'cmake'}
+          - {os: windows-latest, r: 'release', compiler: 'mingw', build: 'autotools'}
+          - {os: windows-latest, r: 'release', compiler: 'msvc', build: 'cmake'}
+          - {os: windows-latest, r: 'release', compiler: 'mingw', build: 'cmake'}
     env:
       R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
       RSPM: ${{ matrix.config.rspm }}
@@ -79,8 +79,8 @@ jobs:
       uses: actions/cache@v2
       with:
         path: ${{ env.R_LIBS_USER }}
-        key: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
-        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
+        key: ${{ runner.os }}-r-${{ matrix.config.r }}-3-${{ hashFiles('R-package/DESCRIPTION') }}
+        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-3-${{ hashFiles('R-package/DESCRIPTION') }}
 
     - name: Install dependencies
       shell: Rscript {0}
@@ -90,7 +90,7 @@ jobs:
                          dependencies = c('Depends', 'Imports', 'LinkingTo'))
     - name: Install igraph on Windows
       shell: Rscript {0}
-      if: matrix.config.os == 'windows-2016'
+      if: matrix.config.os == 'windows-latest'
       run: |
         install.packages('igraph', type='binary', dependencies = c('Depends', 'Imports', 'LinkingTo'))
 
@@ -131,8 +131,8 @@ jobs:
       uses: actions/cache@v2
       with:
         path: ${{ env.R_LIBS_USER }}
-        key: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
-        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-2-${{ hashFiles('R-package/DESCRIPTION') }}
+        key: ${{ runner.os }}-r-${{ matrix.config.r }}-3-${{ hashFiles('R-package/DESCRIPTION') }}
+        restore-keys: ${{ runner.os }}-r-${{ matrix.config.r }}-3-${{ hashFiles('R-package/DESCRIPTION') }}
 
     - name: Install dependencies
       shell: Rscript {0}

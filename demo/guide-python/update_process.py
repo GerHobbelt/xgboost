@@ -1,17 +1,21 @@
-"""Demo for using `process_type` with `prune` and `refresh`.  Modifying existing trees is
-not a well established use for XGBoost, so feel free to experiment.
+"""
+Demo for using `process_type` with `prune` and `refresh`
+========================================================
+
+Modifying existing trees is not a well established use for XGBoost, so feel free to
+experiment.
 
 """
 
 import xgboost as xgb
-from sklearn.datasets import load_boston
+from sklearn.datasets import fetch_california_housing
 import numpy as np
 
 
 def main():
     n_rounds = 32
 
-    X, y = load_boston(return_X_y=True)
+    X, y = fetch_california_housing(return_X_y=True)
 
     # Train a model first
     X_train = X[: X.shape[0] // 2]

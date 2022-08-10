@@ -15,7 +15,7 @@ endfunction(auto_source_group)
 
 # Force static runtime for MSVC
 function(msvc_use_static_runtime)
-  if(MSVC)
+  if(MSVC AND (NOT BUILD_SHARED_LIBS) AND (NOT FORCE_SHARED_CRT))
       set(variables
           CMAKE_C_FLAGS_DEBUG
           CMAKE_C_FLAGS_MINSIZEREL
@@ -91,9 +91,9 @@ function(format_gencode_flags flags out)
   # Set up architecture flags
   if(NOT flags)
     if (CUDA_VERSION VERSION_GREATER_EQUAL "11.1")
-      set(flags "50;52;60;61;70;75;80;86")
+      set(flags "52;60;61;70;75;80;86")
     elseif (CUDA_VERSION VERSION_GREATER_EQUAL "11.0")
-      set(flags "35;50;52;60;61;70;75;80")
+      set(flags "52;60;61;70;75;80")
     elseif(CUDA_VERSION VERSION_GREATER_EQUAL "10.0")
       set(flags "35;50;52;60;61;70;75")
     elseif(CUDA_VERSION VERSION_GREATER_EQUAL "9.0")
@@ -105,9 +105,10 @@ function(format_gencode_flags flags out)
 
   if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.18")
     cmake_policy(SET CMP0104 NEW)
-    foreach(ver ${flags})
-      set(CMAKE_CUDA_ARCHITECTURES "${ver}-real;${ver}-virtual;${CMAKE_CUDA_ARCHITECTURES}")
-    endforeach()
+    list(POP_BACK flags latest_arch)
+    list(TRANSFORM flags APPEND "-real")
+    list(APPEND flags ${latest_arch})
+    set(CMAKE_CUDA_ARCHITECTURES ${flags})
     set(CMAKE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}" PARENT_SCOPE)
     message(STATUS "CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
   else()
@@ -136,7 +137,8 @@ function(xgboost_set_cuda_flags target)
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda>
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
     $<$<COMPILE_LANGUAGE:CUDA>:${GEN_CODE}>
-    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${OpenMP_CXX_FLAGS}>)
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${OpenMP_CXX_FLAGS}>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xfatbin=-compress-all>)
 
   if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.18")
     set_property(TARGET ${target} PROPERTY CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES})
@@ -167,10 +169,17 @@ function(xgboost_set_cuda_flags target)
       $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/utf-8>)
   endif (MSVC)
 
-  set_target_properties(${target} PROPERTIES
-    CUDA_STANDARD 14
-    CUDA_STANDARD_REQUIRED ON
-    CUDA_SEPARABLE_COMPILATION OFF)
+  if (PLUGIN_RMM)
+    set_target_properties(${target} PROPERTIES
+      CUDA_STANDARD 17
+      CUDA_STANDARD_REQUIRED ON
+      CUDA_SEPARABLE_COMPILATION OFF)
+  else ()
+    set_target_properties(${target} PROPERTIES
+      CUDA_STANDARD 14
+      CUDA_STANDARD_REQUIRED ON
+      CUDA_SEPARABLE_COMPILATION OFF)
+  endif (PLUGIN_RMM)
 endfunction(xgboost_set_cuda_flags)
 
 macro(xgboost_link_nccl target)
@@ -187,10 +196,18 @@ endmacro(xgboost_link_nccl)
 
 # compile options
 macro(xgboost_target_properties target)
-  set_target_properties(${target} PROPERTIES
-    CXX_STANDARD 14
-    CXX_STANDARD_REQUIRED ON
-    POSITION_INDEPENDENT_CODE ON)
+  if (PLUGIN_RMM)
+    set_target_properties(${target} PROPERTIES
+      CXX_STANDARD 17
+      CXX_STANDARD_REQUIRED ON
+      POSITION_INDEPENDENT_CODE ON)
+  else ()
+    set_target_properties(${target} PROPERTIES
+      CXX_STANDARD 14
+      CXX_STANDARD_REQUIRED ON
+      POSITION_INDEPENDENT_CODE ON)
+  endif (PLUGIN_RMM)
+
   if (HIDE_CXX_SYMBOLS)
     #-- Hide all C++ symbols
     set_target_properties(${target} PROPERTIES
@@ -245,6 +262,10 @@ macro(xgboost_target_defs target)
       PRIVATE
       -DXGBOOST_BUILTIN_PREFETCH_PRESENT=1)
   endif (XGBOOST_BUILTIN_PREFETCH_PRESENT)
+
+  if (PLUGIN_RMM)
+    target_compile_definitions(objxgboost PUBLIC -DXGBOOST_USE_RMM=1)
+  endif (PLUGIN_RMM)
 endmacro(xgboost_target_defs)
 
 # handles dependencies
@@ -266,6 +287,10 @@ macro(xgboost_target_link_libraries target)
   if (USE_CUDA)
     xgboost_set_cuda_flags(${target})
   endif (USE_CUDA)
+
+  if (PLUGIN_RMM)
+    target_link_libraries(${target} PRIVATE rmm::rmm)
+  endif (PLUGIN_RMM)
 
   if (USE_NCCL)
     xgboost_link_nccl(${target})

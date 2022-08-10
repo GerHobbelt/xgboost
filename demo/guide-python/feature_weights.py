@@ -1,4 +1,6 @@
-'''Using feature weight to change column sampling.
+'''
+Demo for using feature weight to change column sampling
+=======================================================
 
     .. versionadded:: 1.3.0
 '''
@@ -25,7 +27,7 @@ def main(args):
     dtrain.set_info(feature_weights=fw)
 
     bst = xgboost.train({'tree_method': 'hist',
-                         'colsample_bynode': 0.5},
+                         'colsample_bynode': 0.2},
                         dtrain, num_boost_round=10,
                         evals=[(dtrain, 'd')])
     feature_map = bst.get_fscore()

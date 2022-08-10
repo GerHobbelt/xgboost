@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
-project(xgboost LANGUAGES CXX C VERSION 1.5.2)
+project(xgboost LANGUAGES CXX C VERSION 1.6.1)
 include(cmake/Utils.cmake)
 list(APPEND CMAKE_MODULE_PATH "${xgboost_SOURCE_DIR}/cmake/modules")
 cmake_policy(SET CMP0022 NEW)
@@ -28,6 +28,7 @@ set_default_configuration_release()
 option(BUILD_C_DOC "Build documentation for C APIs using Doxygen." OFF)
 option(USE_OPENMP "Build with OpenMP support." ON)
 option(BUILD_STATIC_LIB "Build static library" OFF)
+option(FORCE_SHARED_CRT "Build with dynamic CRT on Windows (/MD)" OFF)
 option(RABIT_BUILD_MPI "Build MPI" OFF)
 ## Bindings
 option(JVM_BINDINGS "Build JVM bindings" OFF)
@@ -137,7 +138,7 @@ if (USE_CUDA)
   add_subdirectory(${PROJECT_SOURCE_DIR}/gputreeshap)
 
   if ((${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 11.4) AND (NOT BUILD_WITH_CUDA_CUB))
-    message(SEND_ERROR "`BUILD_WITH_CUDA_CUB` should be set to `ON` for CUDA >= 11.4")
+    set(BUILD_WITH_CUDA_CUB ON)
   endif ()
 endif (USE_CUDA)
 
@@ -164,6 +165,9 @@ endif (USE_NCCL)
 
 # dmlc-core
 msvc_use_static_runtime()
+if (FORCE_SHARED_CRT)
+  set(DMLC_FORCE_SHARED_CRT ON)
+endif ()
 add_subdirectory(${xgboost_SOURCE_DIR}/dmlc-core)
 
 if (MSVC)
@@ -195,6 +199,10 @@ endif (JVM_BINDINGS)
 
 # Plugin
 add_subdirectory(${xgboost_SOURCE_DIR}/plugin)
+
+if (PLUGIN_RMM)
+  find_package(rmm REQUIRED)
+endif (PLUGIN_RMM)
 
 #-- library
 if (BUILD_STATIC_LIB)
@@ -300,7 +308,7 @@ write_basic_package_version_file(
   COMPATIBILITY AnyNewerVersion)
 install(
   FILES
-  ${CMAKE_BINARY_DIR}/cmake/xgboost-config.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/cmake/xgboost-config.cmake
   ${CMAKE_BINARY_DIR}/cmake/xgboost-config-version.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/xgboost)
 

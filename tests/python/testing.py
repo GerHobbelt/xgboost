@@ -3,6 +3,7 @@ import os
 import urllib
 import zipfile
 import sys
+from typing import Optional
 from contextlib import contextmanager
 from io import StringIO
 from xgboost.compat import SKLEARN_INSTALLED, PANDAS_INSTALLED
@@ -28,6 +29,15 @@ except ImportError:
 memory = Memory('./cachedir', verbose=0)
 
 
+def no_ubjson():
+    reason = "ubjson is not intsalled."
+    try:
+        import ubjson           # noqa
+        return {"condition": False, "reason": reason}
+    except ImportError:
+        return {"condition": True, "reason": reason}
+
+
 def no_sklearn():
     return {'condition': not SKLEARN_INSTALLED,
             'reason': 'Scikit-Learn is not installed'}
@@ -41,6 +51,15 @@ def no_dask():
 def no_pandas():
     return {'condition': not PANDAS_INSTALLED,
             'reason': 'Pandas is not installed.'}
+
+
+def no_arrow():
+    reason = "pyarrow is not installed"
+    try:
+        import pyarrow  # noqa
+        return {"condition": False, "reason": reason}
+    except ImportError:
+        return {"condition": True, "reason": reason}
 
 
 def no_modin():
@@ -177,7 +196,7 @@ class TestDataset:
         self.metric = metric
         self.X, self.y = get_dataset()
         self.w = None
-        self.margin = None
+        self.margin: Optional[np.ndarray] = None
 
     def set_params(self, params_in):
         params_in['objective'] = self.objective
@@ -219,8 +238,8 @@ class TestDataset:
 
 
 @memory.cache
-def get_boston():
-    data = datasets.load_boston()
+def get_california_housing():
+    data = datasets.fetch_california_housing()
     return data.data, data.target
 
 
@@ -304,26 +323,52 @@ def make_categorical(
 
 
 _unweighted_datasets_strategy = strategies.sampled_from(
-    [TestDataset('boston', get_boston, 'reg:squarederror', 'rmse'),
-     TestDataset('digits', get_digits, 'multi:softmax', 'mlogloss'),
-     TestDataset("cancer", get_cancer, "binary:logistic", "logloss"),
-     TestDataset
-     ("sparse", get_sparse, "reg:squarederror", "rmse"),
-     TestDataset("empty", lambda: (np.empty((0, 100)), np.empty(0)), "reg:squarederror",
-                 "rmse")])
+    [
+        TestDataset(
+            "calif_housing", get_california_housing, "reg:squarederror", "rmse"
+        ),
+        TestDataset("digits", get_digits, "multi:softmax", "mlogloss"),
+        TestDataset("cancer", get_cancer, "binary:logistic", "logloss"),
+        TestDataset(
+            "mtreg",
+            lambda: datasets.make_regression(n_samples=128, n_targets=3),
+            "reg:squarederror",
+            "rmse",
+        ),
+        TestDataset("sparse", get_sparse, "reg:squarederror", "rmse"),
+        TestDataset(
+            "empty",
+            lambda: (np.empty((0, 100)), np.empty(0)),
+            "reg:squarederror",
+            "rmse",
+        ),
+    ]
+)
 
 
 @strategies.composite
 def _dataset_weight_margin(draw):
-    data = draw(_unweighted_datasets_strategy)
+    data: TestDataset = draw(_unweighted_datasets_strategy)
     if draw(strategies.booleans()):
-        data.w = draw(arrays(np.float64, (len(data.y)), elements=strategies.floats(0.1, 2.0)))
+        data.w = draw(
+            arrays(np.float64, (len(data.y)), elements=strategies.floats(0.1, 2.0))
+        )
     if draw(strategies.booleans()):
         num_class = 1
         if data.objective == "multi:softmax":
             num_class = int(np.max(data.y) + 1)
+        elif data.name == "mtreg":
+            num_class = data.y.shape[1]
+
         data.margin = draw(
-            arrays(np.float64, (len(data.y) * num_class), elements=strategies.floats(0.5, 1.0)))
+            arrays(
+                np.float64,
+                (data.y.shape[0] * num_class),
+                elements=strategies.floats(0.5, 1.0),
+            )
+        )
+        if num_class != 1:
+            data.margin = data.margin.reshape(data.y.shape[0], num_class)
 
     return data
 
@@ -338,6 +383,7 @@ def non_increasing(L, tolerance=1e-4):
 
 
 def eval_error_metric(predt, dtrain: xgb.DMatrix):
+    """Evaluation metric for xgb.train"""
     label = dtrain.get_label()
     r = np.zeros(predt.shape)
     gt = predt > 0.5
@@ -347,6 +393,16 @@ def eval_error_metric(predt, dtrain: xgb.DMatrix):
     le = predt <= 0.5
     r[le] = label[le]
     return 'CustomErr', np.sum(r)
+
+
+def eval_error_metric_skl(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    """Evaluation metric that looks like metrics provided by sklearn."""
+    r = np.zeros(y_score.shape)
+    gt = y_score > 0.5
+    r[gt] = 1 - y_true[gt]
+    le = y_score <= 0.5
+    r[le] = y_true[le]
+    return np.sum(r)
 
 
 def softmax(x):

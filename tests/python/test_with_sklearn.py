@@ -1,3 +1,4 @@
+from typing import Callable, Optional
 import collections
 import importlib.util
 import numpy as np
@@ -14,16 +15,6 @@ rng = np.random.RandomState(1994)
 pytestmark = pytest.mark.skipif(**tm.no_sklearn())
 
 from sklearn.utils.estimator_checks import parametrize_with_checks
-
-
-class TemporaryDirectory(object):
-    """Context manager for tempfile.mkdtemp()"""
-    def __enter__(self):
-        self.name = tempfile.mkdtemp()
-        return self.name
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        shutil.rmtree(self.name)
 
 
 def test_binary_classification():
@@ -45,7 +36,8 @@ def test_binary_classification():
             assert err < 0.1
 
 
-def test_multiclass_classification():
+@pytest.mark.parametrize('objective', ['multi:softmax', 'multi:softprob'])
+def test_multiclass_classification(objective):
     from sklearn.datasets import load_iris
     from sklearn.model_selection import KFold
 
@@ -63,7 +55,7 @@ def test_multiclass_classification():
     X = iris['data']
     kf = KFold(n_splits=2, shuffle=True, random_state=rng)
     for train_index, test_index in kf.split(X, y):
-        xgb_model = xgb.XGBClassifier().fit(X[train_index], y[train_index])
+        xgb_model = xgb.XGBClassifier(objective=objective).fit(X[train_index], y[train_index])
         assert (xgb_model.get_booster().num_boosted_rounds() ==
                 xgb_model.n_estimators)
         preds = xgb_model.predict(X[test_index])
@@ -311,7 +303,6 @@ def test_feature_importances_gain():
         random_state=0, tree_method="exact",
         learning_rate=0.1,
         importance_type="gain",
-        use_label_encoder=False,
     ).fit(X, y)
 
     exp = np.array([0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
@@ -334,7 +325,6 @@ def test_feature_importances_gain():
         tree_method="exact",
         learning_rate=0.1,
         importance_type="gain",
-        use_label_encoder=False,
     ).fit(X, y)
     np.testing.assert_almost_equal(xgb_model.feature_importances_, exp)
 
@@ -343,14 +333,11 @@ def test_feature_importances_gain():
         tree_method="exact",
         learning_rate=0.1,
         importance_type="gain",
-        use_label_encoder=False,
     ).fit(X, y)
     np.testing.assert_almost_equal(xgb_model.feature_importances_, exp)
 
     # no split can be found
-    cls = xgb.XGBClassifier(
-        min_child_weight=1000, tree_method="hist", n_estimators=1, use_label_encoder=False
-    )
+    cls = xgb.XGBClassifier(min_child_weight=1000, tree_method="hist", n_estimators=1)
     cls.fit(X, y)
     assert np.all(cls.feature_importances_ == 0)
 
@@ -369,32 +356,36 @@ def test_select_feature():
 
 
 def test_num_parallel_tree():
-    from sklearn.datasets import load_boston
-    reg = xgb.XGBRegressor(n_estimators=4, num_parallel_tree=4,
-                           tree_method='hist')
-    boston = load_boston()
-    bst = reg.fit(X=boston['data'], y=boston['target'])
-    dump = bst.get_booster().get_dump(dump_format='json')
+    from sklearn.datasets import fetch_california_housing
+
+    reg = xgb.XGBRegressor(n_estimators=4, num_parallel_tree=4, tree_method="hist")
+    X, y = fetch_california_housing(return_X_y=True)
+    bst = reg.fit(X=X, y=y)
+    dump = bst.get_booster().get_dump(dump_format="json")
     assert len(dump) == 16
 
     reg = xgb.XGBRFRegressor(n_estimators=4)
-    bst = reg.fit(X=boston['data'], y=boston['target'])
-    dump = bst.get_booster().get_dump(dump_format='json')
+    bst = reg.fit(X=X, y=y)
+    dump = bst.get_booster().get_dump(dump_format="json")
     assert len(dump) == 4
 
     config = json.loads(bst.get_booster().save_config())
-    assert int(config['learner']['gradient_booster']['gbtree_train_param'][
-        'num_parallel_tree']) == 4
+    assert (
+        int(
+            config["learner"]["gradient_booster"]["gbtree_model_param"][
+                "num_parallel_tree"
+            ]
+        )
+        == 4
+    )
 
 
-def test_boston_housing_regression():
+def test_calif_housing_regression():
     from sklearn.metrics import mean_squared_error
-    from sklearn.datasets import load_boston
+    from sklearn.datasets import fetch_california_housing
     from sklearn.model_selection import KFold
 
-    boston = load_boston()
-    y = boston['target']
-    X = boston['data']
+    X, y = fetch_california_housing(return_X_y=True)
     kf = KFold(n_splits=2, shuffle=True, random_state=rng)
     for train_index, test_index in kf.split(X, y):
         xgb_model = xgb.XGBRegressor().fit(X[train_index], y[train_index])
@@ -414,13 +405,16 @@ def test_boston_housing_regression():
         assert mean_squared_error(preds3, labels) < 25
         assert mean_squared_error(preds4, labels) < 350
 
+        with pytest.raises(AttributeError, match="feature_names_in_"):
+            xgb_model.feature_names_in_
 
-def run_boston_housing_rf_regression(tree_method):
+
+def run_calif_housing_rf_regression(tree_method):
     from sklearn.metrics import mean_squared_error
-    from sklearn.datasets import load_boston
+    from sklearn.datasets import fetch_california_housing
     from sklearn.model_selection import KFold
 
-    X, y = load_boston(return_X_y=True)
+    X, y = fetch_california_housing(return_X_y=True)
     kf = KFold(n_splits=2, shuffle=True, random_state=rng)
     for train_index, test_index in kf.split(X, y):
         xgb_model = xgb.XGBRFRegressor(random_state=42, tree_method=tree_method).fit(
@@ -435,29 +429,27 @@ def run_boston_housing_rf_regression(tree_method):
         rfreg.fit(X, y, early_stopping_rounds=10)
 
 
-def test_boston_housing_rf_regression():
-    run_boston_housing_rf_regression("hist")
+def test_calif_housing_rf_regression():
+    run_calif_housing_rf_regression("hist")
 
 
 def test_parameter_tuning():
     from sklearn.model_selection import GridSearchCV
-    from sklearn.datasets import load_boston
+    from sklearn.datasets import fetch_california_housing
 
-    boston = load_boston()
-    y = boston['target']
-    X = boston['data']
+    X, y = fetch_california_housing(return_X_y=True)
     xgb_model = xgb.XGBRegressor(learning_rate=0.1)
     clf = GridSearchCV(xgb_model, {'max_depth': [2, 4, 6],
                                    'n_estimators': [50, 100, 200]},
                        cv=3, verbose=1)
     clf.fit(X, y)
     assert clf.best_score_ < 0.7
-    assert clf.best_params_ == {'n_estimators': 100, 'max_depth': 4}
+    assert clf.best_params_ == {'n_estimators': 200, 'max_depth': 4}
 
 
 def test_regression_with_custom_objective():
     from sklearn.metrics import mean_squared_error
-    from sklearn.datasets import load_boston
+    from sklearn.datasets import fetch_california_housing
     from sklearn.model_selection import KFold
 
     def objective_ls(y_true, y_pred):
@@ -465,9 +457,7 @@ def test_regression_with_custom_objective():
         hess = np.ones(len(y_true))
         return grad, hess
 
-    boston = load_boston()
-    y = boston['target']
-    X = boston['data']
+    X, y = fetch_california_housing(return_X_y=True)
     kf = KFold(n_splits=2, shuffle=True, random_state=rng)
     for train_index, test_index in kf.split(X, y):
         xgb_model = xgb.XGBRegressor(objective=objective_ls).fit(
@@ -525,7 +515,7 @@ def test_classification_with_custom_objective():
         X, y
     )
 
-    cls = xgb.XGBClassifier(use_label_encoder=False, n_estimators=1)
+    cls = xgb.XGBClassifier(n_estimators=1)
     cls.fit(X, y)
 
     is_called = [False]
@@ -541,7 +531,7 @@ def test_classification_with_custom_objective():
     assert is_called[0]
 
 
-def test_sklearn_api():
+def run_sklearn_api(booster, error, n_est):
     from sklearn.datasets import load_iris
     from sklearn.model_selection import train_test_split
 
@@ -549,30 +539,18 @@ def test_sklearn_api():
     tr_d, te_d, tr_l, te_l = train_test_split(iris.data, iris.target,
                                               train_size=120, test_size=0.2)
 
-    classifier = xgb.XGBClassifier(booster='gbtree', n_estimators=10)
+    classifier = xgb.XGBClassifier(booster=booster, n_estimators=n_est)
     classifier.fit(tr_d, tr_l)
 
     preds = classifier.predict(te_d)
     labels = te_l
     err = sum([1 for p, l in zip(preds, labels) if p != l]) * 1.0 / len(te_l)
-    assert err < 0.2
+    assert err < error
 
 
-def test_sklearn_api_gblinear():
-    from sklearn.datasets import load_iris
-    from sklearn.model_selection import train_test_split
-
-    iris = load_iris()
-    tr_d, te_d, tr_l, te_l = train_test_split(iris.data, iris.target,
-                                              train_size=120)
-
-    classifier = xgb.XGBClassifier(booster='gblinear', n_estimators=100)
-    classifier.fit(tr_d, tr_l)
-
-    preds = classifier.predict(te_d)
-    labels = te_l
-    err = sum([1 for p, l in zip(preds, labels) if p != l]) * 1.0 / len(te_l)
-    assert err < 0.5
+def test_sklearn_api():
+    run_sklearn_api("gbtree", 0.2, 10)
+    run_sklearn_api("gblinear", 0.5, 100)
 
 
 @pytest.mark.skipif(**tm.no_matplotlib())
@@ -753,7 +731,7 @@ def test_sklearn_get_default_params():
     assert cls.get_params()['base_score'] is not None
 
 
-def test_validation_weights_xgbmodel():
+def run_validation_weights(model):
     from sklearn.datasets import make_hastie_10_2
 
     # prepare training and test data
@@ -765,7 +743,7 @@ def test_validation_weights_xgbmodel():
     # instantiate model
     param_dist = {'objective': 'binary:logistic', 'n_estimators': 2,
                   'random_state': 123}
-    clf = xgb.sklearn.XGBModel(**param_dist)
+    clf = model(**param_dist)
 
     # train it using instance weights only in the training set
     weights_train = np.random.choice([1, 2], len(X_train))
@@ -810,49 +788,9 @@ def test_validation_weights_xgbmodel():
                 sample_weight_eval_set=[weights_train])
 
 
-def test_validation_weights_xgbclassifier():
-    from sklearn.datasets import make_hastie_10_2
-
-    # prepare training and test data
-    X, y = make_hastie_10_2(n_samples=2000, random_state=42)
-    labels, y = np.unique(y, return_inverse=True)
-    X_train, X_test = X[:1600], X[1600:]
-    y_train, y_test = y[:1600], y[1600:]
-
-    # instantiate model
-    param_dist = {'objective': 'binary:logistic', 'n_estimators': 2,
-                  'random_state': 123}
-    clf = xgb.sklearn.XGBClassifier(**param_dist)
-
-    # train it using instance weights only in the training set
-    weights_train = np.random.choice([1, 2], len(X_train))
-    clf.fit(X_train, y_train,
-            sample_weight=weights_train,
-            eval_set=[(X_test, y_test)],
-            eval_metric='logloss',
-            verbose=False)
-
-    # evaluate logloss metric on test set *without* using weights
-    evals_result_without_weights = clf.evals_result()
-    logloss_without_weights = evals_result_without_weights[
-        "validation_0"]["logloss"]
-
-    # now use weights for the test set
-    np.random.seed(0)
-    weights_test = np.random.choice([1, 2], len(X_test))
-    clf.fit(X_train, y_train,
-            sample_weight=weights_train,
-            eval_set=[(X_test, y_test)],
-            sample_weight_eval_set=[weights_test],
-            eval_metric='logloss',
-            verbose=False)
-    evals_result_with_weights = clf.evals_result()
-    logloss_with_weights = evals_result_with_weights["validation_0"]["logloss"]
-
-    # check that the logloss in the test set is actually different
-    # when using weights than when not using them
-    assert all((logloss_with_weights[i] != logloss_without_weights[i]
-                for i in [0, 1]))
+def test_validation_weights():
+    run_validation_weights(xgb.XGBModel)
+    run_validation_weights(xgb.XGBClassifier)
 
 
 def save_load_model(model_path):
@@ -894,16 +832,16 @@ def save_load_model(model_path):
 
 
 def test_save_load_model():
-    with TemporaryDirectory() as tempdir:
+    with tempfile.TemporaryDirectory() as tempdir:
         model_path = os.path.join(tempdir, 'digits.model')
         save_load_model(model_path)
 
-    with TemporaryDirectory() as tempdir:
+    with tempfile.TemporaryDirectory() as tempdir:
         model_path = os.path.join(tempdir, 'digits.model.json')
         save_load_model(model_path)
 
     from sklearn.datasets import load_digits
-    with TemporaryDirectory() as tempdir:
+    with tempfile.TemporaryDirectory() as tempdir:
         model_path = os.path.join(tempdir, 'digits.model.json')
         digits = load_digits(n_class=2)
         y = digits['target']
@@ -931,13 +869,13 @@ def test_save_load_model():
 
 
 def test_RFECV():
-    from sklearn.datasets import load_boston
+    from sklearn.datasets import fetch_california_housing
     from sklearn.datasets import load_breast_cancer
     from sklearn.datasets import load_iris
     from sklearn.feature_selection import RFECV
 
     # Regression
-    X, y = load_boston(return_X_y=True)
+    X, y = fetch_california_housing(return_X_y=True)
     bst = xgb.XGBRegressor(booster='gblinear', learning_rate=0.1,
                            n_estimators=10,
                            objective='reg:squarederror',
@@ -951,7 +889,7 @@ def test_RFECV():
     bst = xgb.XGBClassifier(booster='gblinear', learning_rate=0.1,
                             n_estimators=10,
                             objective='binary:logistic',
-                            random_state=0, verbosity=0, use_label_encoder=False)
+                            random_state=0, verbosity=0)
     rfecv = RFECV(estimator=bst, step=1, cv=3, scoring='roc_auc')
     rfecv.fit(X, y)
 
@@ -962,7 +900,7 @@ def test_RFECV():
                             n_estimators=10,
                             objective='multi:softprob',
                             random_state=0, reg_alpha=0.001, reg_lambda=0.01,
-                            scale_pos_weight=0.5, verbosity=0, use_label_encoder=False)
+                            scale_pos_weight=0.5, verbosity=0)
     rfecv = RFECV(estimator=bst, step=1, cv=3, scoring='neg_log_loss')
     rfecv.fit(X, y)
 
@@ -971,7 +909,7 @@ def test_RFECV():
     rfecv = RFECV(estimator=reg)
     rfecv.fit(X, y)
 
-    cls = xgb.XGBClassifier(use_label_encoder=False)
+    cls = xgb.XGBClassifier()
     rfecv = RFECV(estimator=cls, step=1, cv=3,
                   scoring='neg_mean_squared_error')
     rfecv.fit(X, y)
@@ -981,7 +919,7 @@ def test_XGBClassifier_resume():
     from sklearn.datasets import load_breast_cancer
     from sklearn.metrics import log_loss
 
-    with TemporaryDirectory() as tempdir:
+    with tempfile.TemporaryDirectory() as tempdir:
         model1_path = os.path.join(tempdir, 'test_XGBClassifier.model')
         model1_booster_path = os.path.join(tempdir, 'test_XGBClassifier.booster')
 
@@ -1080,8 +1018,9 @@ def test_deprecate_position_arg():
     with pytest.warns(FutureWarning):
         model.fit(X, y, w)
 
-    with pytest.warns(FutureWarning):
+    with pytest.raises(ValueError):
         xgb.XGBRFClassifier(1, use_label_encoder=True)
+
     model = xgb.XGBRFClassifier(n_estimators=1)
     with pytest.warns(FutureWarning):
         model.fit(X, y, w)
@@ -1110,6 +1049,8 @@ def test_pandas_input():
     train = df.drop(columns=['status'])
     model = xgb.XGBClassifier()
     model.fit(train, target)
+    np.testing.assert_equal(model.feature_names_in_, np.array(feature_names))
+
     clf_isotonic = CalibratedClassifierCV(model,
                                           cv='prefit', method='isotonic')
     clf_isotonic.fit(train, target)
@@ -1119,10 +1060,10 @@ def test_pandas_input():
                                np.array([0, 1]))
 
 
-def run_feature_weights(X, y, fw, model=xgb.XGBRegressor):
-    with TemporaryDirectory() as tmpdir:
+def run_feature_weights(X, y, fw, tree_method, model=xgb.XGBRegressor):
+    with tempfile.TemporaryDirectory() as tmpdir:
         colsample_bynode = 0.5
-        reg = model(tree_method='hist', colsample_bynode=colsample_bynode)
+        reg = model(tree_method=tree_method, colsample_bynode=colsample_bynode)
 
         reg.fit(X, y, feature_weights=fw)
         model_path = os.path.join(tmpdir, 'model.json')
@@ -1157,7 +1098,8 @@ def run_feature_weights(X, y, fw, model=xgb.XGBRegressor):
         return w
 
 
-def test_feature_weights():
+@pytest.mark.parametrize("tree_method", ["approx", "hist"])
+def test_feature_weights(tree_method):
     kRows = 512
     kCols = 64
     X = rng.randn(kRows, kCols)
@@ -1166,12 +1108,12 @@ def test_feature_weights():
     fw = np.ones(shape=(kCols,))
     for i in range(kCols):
         fw[i] *= float(i)
-    poly_increasing = run_feature_weights(X, y, fw, xgb.XGBRegressor)
+    poly_increasing = run_feature_weights(X, y, fw, tree_method, xgb.XGBRegressor)
 
     fw = np.ones(shape=(kCols,))
     for i in range(kCols):
         fw[i] *= float(kCols - i)
-    poly_decreasing = run_feature_weights(X, y, fw, xgb.XGBRegressor)
+    poly_decreasing = run_feature_weights(X, y, fw, tree_method, xgb.XGBRegressor)
 
     # Approxmated test, this is dependent on the implementation of random
     # number generator in std library.
@@ -1179,32 +1121,89 @@ def test_feature_weights():
     assert poly_decreasing[0] < -0.08
 
 
-def run_boost_from_prediction(tree_method):
-    from sklearn.datasets import load_breast_cancer
-    X, y = load_breast_cancer(return_X_y=True)
+def run_boost_from_prediction_binary(tree_method, X, y, as_frame: Optional[Callable]):
+    """
+    Parameters
+    ----------
+
+    as_frame: A callable function to convert margin into DataFrame, useful for different
+    df implementations.
+    """
+
     model_0 = xgb.XGBClassifier(
-        learning_rate=0.3, random_state=0, n_estimators=4,
-        tree_method=tree_method)
+        learning_rate=0.3, random_state=0, n_estimators=4, tree_method=tree_method
+    )
     model_0.fit(X=X, y=y)
     margin = model_0.predict(X, output_margin=True)
+    if as_frame is not None:
+        margin = as_frame(margin)
 
     model_1 = xgb.XGBClassifier(
-        learning_rate=0.3, random_state=0, n_estimators=4,
-        tree_method=tree_method)
+        learning_rate=0.3, random_state=0, n_estimators=4, tree_method=tree_method
+    )
     model_1.fit(X=X, y=y, base_margin=margin)
     predictions_1 = model_1.predict(X, base_margin=margin)
 
     cls_2 = xgb.XGBClassifier(
-        learning_rate=0.3, random_state=0, n_estimators=8,
-        tree_method=tree_method)
+        learning_rate=0.3, random_state=0, n_estimators=8, tree_method=tree_method
+    )
     cls_2.fit(X=X, y=y)
     predictions_2 = cls_2.predict(X)
-    assert np.all(predictions_1 == predictions_2)
+    np.testing.assert_allclose(predictions_1, predictions_2)
+
+
+def run_boost_from_prediction_multi_clasas(
+    estimator, tree_method, X, y, as_frame: Optional[Callable]
+):
+    # Multi-class
+    model_0 = estimator(
+        learning_rate=0.3, random_state=0, n_estimators=4, tree_method=tree_method
+    )
+    model_0.fit(X=X, y=y)
+    margin = model_0.get_booster().inplace_predict(X, predict_type="margin")
+    if as_frame is not None:
+        margin = as_frame(margin)
+
+    model_1 = estimator(
+        learning_rate=0.3, random_state=0, n_estimators=4, tree_method=tree_method
+    )
+    model_1.fit(X=X, y=y, base_margin=margin)
+    predictions_1 = model_1.get_booster().predict(
+        xgb.DMatrix(X, base_margin=margin), output_margin=True
+    )
+
+    model_2 = estimator(
+        learning_rate=0.3, random_state=0, n_estimators=8, tree_method=tree_method
+    )
+    model_2.fit(X=X, y=y)
+    predictions_2 = model_2.get_booster().inplace_predict(X, predict_type="margin")
+
+    if hasattr(predictions_1, "get"):
+        predictions_1 = predictions_1.get()
+    if hasattr(predictions_2, "get"):
+        predictions_2 = predictions_2.get()
+    np.testing.assert_allclose(predictions_1, predictions_2, atol=1e-6)
 
 
 @pytest.mark.parametrize("tree_method", ["hist", "approx", "exact"])
 def test_boost_from_prediction(tree_method):
-    run_boost_from_prediction(tree_method)
+    from sklearn.datasets import load_breast_cancer, load_digits, make_regression
+    import pandas as pd
+
+    X, y = load_breast_cancer(return_X_y=True)
+
+    run_boost_from_prediction_binary(tree_method, X, y, None)
+    run_boost_from_prediction_binary(tree_method, X, y, pd.DataFrame)
+
+    X, y = load_digits(return_X_y=True)
+
+    run_boost_from_prediction_multi_clasas(xgb.XGBClassifier, tree_method, X, y, None)
+    run_boost_from_prediction_multi_clasas(
+        xgb.XGBClassifier, tree_method, X, y, pd.DataFrame
+    )
+
+    X, y = make_regression(n_samples=100, n_targets=4)
+    run_boost_from_prediction_multi_clasas(xgb.XGBRegressor, tree_method, X, y, None)
 
 
 def test_estimator_type():
@@ -1228,6 +1227,24 @@ def test_estimator_type():
 
         cls = xgb.XGBClassifier()
         cls.load_model(path)  # no error
+
+
+def test_multilabel_classification() -> None:
+    from sklearn.datasets import make_multilabel_classification
+
+    X, y = make_multilabel_classification(
+        n_samples=32, n_classes=5, n_labels=3, random_state=0
+    )
+    clf = xgb.XGBClassifier(tree_method="hist")
+    clf.fit(X, y)
+    booster = clf.get_booster()
+    learner = json.loads(booster.save_config())["learner"]
+    assert int(learner["learner_model_param"]["num_target"]) == 5
+
+    np.testing.assert_allclose(clf.predict(X), y)
+    predt = (clf.predict_proba(X) > 0.5).astype(np.int64)
+    np.testing.assert_allclose(clf.predict(X), predt)
+    assert predt.dtype == np.int64
 
 
 def run_data_initialization(DMatrix, model, X, y):
@@ -1303,3 +1320,79 @@ def test_prediction_config():
 
     reg.set_params(booster="gblinear")
     assert reg._can_use_inplace_predict() is False
+
+
+def test_evaluation_metric():
+    from sklearn.datasets import load_diabetes, load_digits
+    from sklearn.metrics import mean_absolute_error
+    X, y = load_diabetes(return_X_y=True)
+    n_estimators = 16
+
+    with tm.captured_output() as (out, err):
+        reg = xgb.XGBRegressor(
+            tree_method="hist",
+            eval_metric=mean_absolute_error,
+            n_estimators=n_estimators,
+        )
+        reg.fit(X, y, eval_set=[(X, y)])
+        lines = out.getvalue().strip().split('\n')
+
+    assert len(lines) == n_estimators
+    for line in lines:
+        assert line.find("mean_absolute_error") != -1
+
+    def metric(predt: np.ndarray, Xy: xgb.DMatrix):
+        y = Xy.get_label()
+        return "m", np.abs(predt - y).sum()
+
+    with pytest.warns(UserWarning):
+        reg = xgb.XGBRegressor(
+            tree_method="hist",
+            n_estimators=1,
+        )
+        reg.fit(X, y, eval_set=[(X, y)], eval_metric=metric)
+
+    def merror(y_true: np.ndarray, predt: np.ndarray):
+        n_samples = y_true.shape[0]
+        assert n_samples == predt.size
+        errors = np.zeros(y_true.shape[0])
+        errors[y != predt] = 1.0
+        return np.sum(errors) / n_samples
+
+    X, y = load_digits(n_class=10, return_X_y=True)
+
+    clf = xgb.XGBClassifier(
+        use_label_encoder=False,
+        tree_method="hist",
+        eval_metric=merror,
+        n_estimators=16,
+        objective="multi:softmax"
+    )
+    clf.fit(X, y, eval_set=[(X, y)])
+    custom = clf.evals_result()
+
+    clf = xgb.XGBClassifier(
+        use_label_encoder=False,
+        tree_method="hist",
+        eval_metric="merror",
+        n_estimators=16,
+        objective="multi:softmax"
+    )
+    clf.fit(X, y, eval_set=[(X, y)])
+    internal = clf.evals_result()
+
+    np.testing.assert_allclose(
+        custom["validation_0"]["merror"],
+        internal["validation_0"]["merror"],
+        atol=1e-6
+    )
+
+    clf = xgb.XGBRFClassifier(
+        use_label_encoder=False,
+        tree_method="hist", n_estimators=16,
+        objective=tm.softprob_obj(10),
+        eval_metric=merror,
+    )
+    with pytest.raises(AssertionError):
+        # shape check inside the `merror` function
+        clf.fit(X, y, eval_set=[(X, y)])

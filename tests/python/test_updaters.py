@@ -1,3 +1,5 @@
+from random import choice
+from string import ascii_lowercase
 import testing as tm
 import pytest
 import xgboost as xgb
@@ -8,10 +10,10 @@ exact_parameter_strategy = strategies.fixed_dictionaries({
     'nthread': strategies.integers(1, 4),
     'max_depth': strategies.integers(1, 11),
     'min_child_weight': strategies.floats(0.5, 2.0),
-    'alpha': strategies.floats(0.0, 2.0),
+    'alpha': strategies.floats(1e-5, 2.0),
     'lambda': strategies.floats(1e-5, 2.0),
     'eta': strategies.floats(0.01, 0.5),
-    'gamma': strategies.floats(0.0, 2.0),
+    'gamma': strategies.floats(1e-5, 2.0),
     'seed': strategies.integers(0, 10),
     # We cannot enable subsampling as the training loss can increase
     # 'subsample': strategies.floats(0.5, 1.0),
@@ -38,21 +40,27 @@ def train_result(param, dmat, num_rounds):
 class TestTreeMethod:
     @given(exact_parameter_strategy, strategies.integers(1, 20),
            tm.dataset_strategy)
-    @settings(deadline=None)
+    @settings(deadline=None, print_blob=True)
     def test_exact(self, param, num_rounds, dataset):
         param['tree_method'] = 'exact'
         param = dataset.set_params(param)
         result = train_result(param, dataset.get_dmat(), num_rounds)
         assert tm.non_increasing(result['train'][dataset.metric])
 
-    @given(exact_parameter_strategy, strategies.integers(1, 20),
-           tm.dataset_strategy)
-    @settings(deadline=None)
-    def test_approx(self, param, num_rounds, dataset):
-        param['tree_method'] = 'approx'
+    @given(
+        exact_parameter_strategy,
+        hist_parameter_strategy,
+        strategies.integers(1, 20),
+        tm.dataset_strategy,
+    )
+    @settings(deadline=None, print_blob=True)
+    def test_approx(self, param, hist_param, num_rounds, dataset):
+        param["tree_method"] = "approx"
         param = dataset.set_params(param)
+        param.update(hist_param)
         result = train_result(param, dataset.get_dmat(), num_rounds)
-        assert tm.non_increasing(result['train'][dataset.metric], 1e-3)
+        note(result)
+        assert tm.non_increasing(result["train"][dataset.metric])
 
     @pytest.mark.skipif(**tm.no_sklearn())
     def test_pruner(self):
@@ -80,7 +88,7 @@ class TestTreeMethod:
 
     @given(exact_parameter_strategy, hist_parameter_strategy, strategies.integers(1, 20),
            tm.dataset_strategy)
-    @settings(deadline=None)
+    @settings(deadline=None, print_blob=True)
     def test_hist(self, param, hist_param, num_rounds, dataset):
         param['tree_method'] = 'hist'
         param = dataset.set_params(param)
@@ -126,3 +134,141 @@ class TestTreeMethod:
         y = [1000000., 0., 0., 500000.]
         w = [0, 0, 1, 0]
         model.fit(X, y, sample_weight=w)
+
+    def run_invalid_category(self, tree_method: str) -> None:
+        rng = np.random.default_rng()
+        # too large
+        X = rng.integers(low=0, high=4, size=1000).reshape(100, 10)
+        y = rng.normal(loc=0, scale=1, size=100)
+        X[13, 7] = np.iinfo(np.int32).max + 1
+
+        # Check is performed during sketching.
+        Xy = xgb.DMatrix(X, y, feature_types=["c"] * 10)
+        with pytest.raises(ValueError):
+            xgb.train({"tree_method": tree_method}, Xy)
+
+        X[13, 7] = 16777216
+        Xy = xgb.DMatrix(X, y, feature_types=["c"] * 10)
+        with pytest.raises(ValueError):
+            xgb.train({"tree_method": tree_method}, Xy)
+
+        # mixed positive and negative values
+        X = rng.normal(loc=0, scale=1, size=1000).reshape(100, 10)
+        y = rng.normal(loc=0, scale=1, size=100)
+
+        Xy = xgb.DMatrix(X, y, feature_types=["c"] * 10)
+        with pytest.raises(ValueError):
+            xgb.train({"tree_method": tree_method}, Xy)
+
+        if tree_method == "gpu_hist":
+            import cupy as cp
+
+            X, y = cp.array(X), cp.array(y)
+            with pytest.raises(ValueError):
+                Xy = xgb.DeviceQuantileDMatrix(X, y, feature_types=["c"] * 10)
+
+    def test_invalid_category(self) -> None:
+        self.run_invalid_category("approx")
+        self.run_invalid_category("hist")
+
+    def run_max_cat(self, tree_method: str) -> None:
+        """Test data with size smaller than number of categories."""
+        import pandas as pd
+        n_cat = 100
+        n = 5
+        X = pd.Series(
+            ["".join(choice(ascii_lowercase) for i in range(3)) for i in range(n_cat)],
+            dtype="category",
+        )[:n].to_frame()
+
+        reg = xgb.XGBRegressor(
+            enable_categorical=True,
+            tree_method=tree_method,
+            n_estimators=10,
+        )
+        y = pd.Series(range(n))
+        reg.fit(X=X, y=y, eval_set=[(X, y)])
+        assert tm.non_increasing(reg.evals_result()["validation_0"]["rmse"])
+
+    @pytest.mark.parametrize("tree_method", ["hist", "approx"])
+    def test_max_cat(self, tree_method) -> None:
+        self.run_max_cat(tree_method)
+
+    def run_categorical_basic(self, rows, cols, rounds, cats, tree_method):
+        onehot, label = tm.make_categorical(rows, cols, cats, True)
+        cat, _ = tm.make_categorical(rows, cols, cats, False)
+
+        by_etl_results = {}
+        by_builtin_results = {}
+
+        predictor = "gpu_predictor" if tree_method == "gpu_hist" else None
+        # Use one-hot exclusively
+        parameters = {
+            "tree_method": tree_method, "predictor": predictor, "max_cat_to_onehot": 9999
+        }
+
+        m = xgb.DMatrix(onehot, label, enable_categorical=False)
+        xgb.train(
+            parameters,
+            m,
+            num_boost_round=rounds,
+            evals=[(m, "Train")],
+            evals_result=by_etl_results,
+        )
+
+        m = xgb.DMatrix(cat, label, enable_categorical=True)
+        xgb.train(
+            parameters,
+            m,
+            num_boost_round=rounds,
+            evals=[(m, "Train")],
+            evals_result=by_builtin_results,
+        )
+
+        # There are guidelines on how to specify tolerance based on considering output as
+        # random variables. But in here the tree construction is extremely sensitive to
+        # floating point errors. An 1e-5 error in a histogram bin can lead to an entirely
+        # different tree.  So even though the test is quite lenient, hypothesis can still
+        # pick up falsifying examples from time to time.
+        np.testing.assert_allclose(
+            np.array(by_etl_results["Train"]["rmse"]),
+            np.array(by_builtin_results["Train"]["rmse"]),
+            rtol=1e-3,
+        )
+        assert tm.non_increasing(by_builtin_results["Train"]["rmse"])
+
+        by_grouping: xgb.callback.TrainingCallback.EvalsLog = {}
+        parameters["max_cat_to_onehot"] = 1
+        parameters["reg_lambda"] = 0
+        m = xgb.DMatrix(cat, label, enable_categorical=True)
+        xgb.train(
+            parameters,
+            m,
+            num_boost_round=rounds,
+            evals=[(m, "Train")],
+            evals_result=by_grouping,
+        )
+        rmse_oh = by_builtin_results["Train"]["rmse"]
+        rmse_group = by_grouping["Train"]["rmse"]
+        # always better or equal to onehot when there's no regularization.
+        for a, b in zip(rmse_oh, rmse_group):
+            assert a >= b
+
+        parameters["reg_lambda"] = 1.0
+        by_grouping = {}
+        xgb.train(
+            parameters,
+            m,
+            num_boost_round=32,
+            evals=[(m, "Train")],
+            evals_result=by_grouping,
+        )
+        assert tm.non_increasing(by_grouping["Train"]["rmse"]), by_grouping
+
+    @given(strategies.integers(10, 400), strategies.integers(3, 8),
+           strategies.integers(1, 2), strategies.integers(4, 7))
+    @settings(deadline=None, print_blob=True)
+    @pytest.mark.skipif(**tm.no_pandas())
+    def test_categorical(self, rows, cols, rounds, cats):
+        self.run_categorical_basic(rows, cols, rounds, cats, "approx")
+        self.run_categorical_basic(rows, cols, rounds, cats, "hist")

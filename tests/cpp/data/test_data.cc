@@ -1,3 +1,6 @@
+/*!
+ * Copyright 2019-2022 by XGBoost Contributors
+ */
 #include <gtest/gtest.h>
 #include <dmlc/filesystem.h>
 #include <fstream>
@@ -66,14 +69,14 @@ TEST(SparsePage, PushCSCAfterTranspose) {
   SparsePage page; // Consolidated sparse page
   for (const auto &batch : dmat->GetBatches<xgboost::SparsePage>()) {
     // Transpose each batch and push
-    SparsePage tmp = batch.GetTranspose(ncols);
+    SparsePage tmp = batch.GetTranspose(ncols, common::OmpGetNumThreads(0));
     page.PushCSC(tmp);
   }
 
   // Make sure that the final sparse page has the right number of entries
   ASSERT_EQ(kEntries, page.data.Size());
 
-  page.SortRows();
+  page.SortRows(common::OmpGetNumThreads(0));
   auto v = page.GetView();
   for (size_t i = 0; i < v.Size(); ++i) {
     auto column = v[i];
@@ -81,6 +84,30 @@ TEST(SparsePage, PushCSCAfterTranspose) {
       ASSERT_GE(column[j].fvalue, column[j-1].fvalue);
     }
   }
+}
+
+TEST(SparsePage, SortIndices) {
+  auto p_fmat = RandomDataGenerator{100, 10, 0.6}.GenerateDMatrix();
+  auto n_threads = common::OmpGetNumThreads(0);
+  SparsePage copy;
+  for (auto const& page : p_fmat->GetBatches<SparsePage>()) {
+    ASSERT_TRUE(page.IsIndicesSorted(n_threads));
+    copy.Push(page);
+  }
+  ASSERT_TRUE(copy.IsIndicesSorted(n_threads));
+
+  for (size_t ridx = 0; ridx < copy.Size(); ++ridx) {
+    auto beg = copy.offset.HostVector()[ridx];
+    auto end = copy.offset.HostVector()[ridx + 1];
+    auto& h_data = copy.data.HostVector();
+    if (end - beg >= 2) {
+      std::swap(h_data[beg], h_data[end - 1]);
+    }
+  }
+  ASSERT_FALSE(copy.IsIndicesSorted(n_threads));
+
+  copy.SortIndices(n_threads);
+  ASSERT_TRUE(copy.IsIndicesSorted(n_threads));
 }
 
 TEST(DMatrix, Uri) {

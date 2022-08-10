@@ -1,15 +1,25 @@
-// Copyright (c) 2019-2020 by Contributors
+// Copyright (c) 2019-2022 by Contributors
 #include <gtest/gtest.h>
 #include <dmlc/filesystem.h>
 #include <string>
 #include <xgboost/learner.h>
 #include <xgboost/data.h>
 #include <xgboost/base.h>
+#include <xgboost/json.h>
 #include "helpers.h"
 #include "../../src/common/io.h"
 #include "../../src/common/random.h"
 
 namespace xgboost {
+template <typename Array>
+void CompareIntArray(Json l, Json r) {
+  auto const& l_arr = get<Array const>(l);
+  auto const& r_arr = get<Array const>(r);
+  ASSERT_EQ(l_arr.size(), r_arr.size());
+  for (size_t i = 0; i < l_arr.size(); ++i) {
+    ASSERT_EQ(l_arr[i], r_arr[i]);
+  }
+}
 
 void CompareJSON(Json l, Json r) {
   switch (l.GetValue().Type()) {
@@ -43,6 +53,27 @@ void CompareJSON(Json l, Json r) {
     for (size_t i = 0; i < l_arr.size(); ++i) {
       CompareJSON(l_arr[i], r_arr[i]);
     }
+    break;
+  }
+  case Value::ValueKind::kNumberArray: {
+    auto const& l_arr = get<F32Array const>(l);
+    auto const& r_arr = get<F32Array const>(r);
+    ASSERT_EQ(l_arr.size(), r_arr.size());
+    for (size_t i = 0; i < l_arr.size(); ++i) {
+      ASSERT_NEAR(l_arr[i], r_arr[i], kRtEps);
+    }
+    break;
+  }
+  case Value::ValueKind::kU8Array: {
+    CompareIntArray<U8Array>(l, r);
+    break;
+  }
+  case Value::ValueKind::kI32Array: {
+    CompareIntArray<I32Array>(l, r);
+    break;
+  }
+  case Value::ValueKind::kI64Array: {
+    CompareIntArray<I64Array>(l, r);
     break;
   }
   case Value::ValueKind::kBoolean: {
@@ -147,8 +178,9 @@ void TestLearnerSerialization(Args args, FeatureMap const& fmap, std::shared_ptr
       learner->Save(&fo);
     }
 
-    Json m_0 = Json::Load(StringView{continued_model.c_str(), continued_model.size()});
-    Json m_1 = Json::Load(StringView{model_at_2kiter.c_str(), model_at_2kiter.size()});
+    Json m_0 = Json::Load(StringView{continued_model}, std::ios::binary);
+    Json m_1 = Json::Load(StringView{model_at_2kiter}, std::ios::binary);
+
     CompareJSON(m_0, m_1);
   }
 
@@ -182,8 +214,8 @@ void TestLearnerSerialization(Args args, FeatureMap const& fmap, std::shared_ptr
     common::MemoryBufferStream fo(&serialised_model_tmp);
     learner->Save(&fo);
 
-    Json m_0 = Json::Load(StringView{model_at_2kiter.c_str(), model_at_2kiter.size()});
-    Json m_1 = Json::Load(StringView{serialised_model_tmp.c_str(), serialised_model_tmp.size()});
+    Json m_0 = Json::Load(StringView{model_at_2kiter}, std::ios::binary);
+    Json m_1 = Json::Load(StringView{serialised_model_tmp}, std::ios::binary);
     // GPU ID is changed as data is coming from device.
     ASSERT_EQ(get<Object>(m_0["Config"]["learner"]["generic_param"]).erase("gpu_id"),
               get<Object>(m_1["Config"]["learner"]["generic_param"]).erase("gpu_id"));
@@ -203,8 +235,8 @@ class SerializationTest : public ::testing::Test {
   void SetUp() override {
     p_dmat_ = RandomDataGenerator(kRows, kCols, .5f).GenerateDMatrix();
 
-    p_dmat_->Info().labels_.Resize(kRows);
-    auto &h_labels = p_dmat_->Info().labels_.HostVector();
+    p_dmat_->Info().labels.Reshape(kRows);
+    auto& h_labels = p_dmat_->Info().labels.Data()->HostVector();
 
     xgboost::SimpleLCG gen(0);
     SimpleRealUniformDistribution<float> dis(0.0f, 1.0f);
@@ -217,6 +249,9 @@ class SerializationTest : public ::testing::Test {
     }
   }
 };
+
+size_t constexpr SerializationTest::kRows;
+size_t constexpr SerializationTest::kCols;
 
 TEST_F(SerializationTest, Exact) {
   TestLearnerSerialization({{"booster", "gbtree"},
@@ -388,8 +423,8 @@ class LogitSerializationTest : public SerializationTest {
     p_dmat_ = RandomDataGenerator(kRows, kCols, .5f).GenerateDMatrix();
 
     std::shared_ptr<DMatrix> p_dmat{p_dmat_};
-    p_dmat->Info().labels_.Resize(kRows);
-    auto &h_labels = p_dmat->Info().labels_.HostVector();
+    p_dmat->Info().labels.Reshape(kRows);
+    auto& h_labels = p_dmat->Info().labels.Data()->HostVector();
 
     std::bernoulli_distribution flip(0.5);
     auto& rnd = common::GlobalRandom();
@@ -512,8 +547,8 @@ class MultiClassesSerializationTest : public SerializationTest {
     p_dmat_ = RandomDataGenerator(kRows, kCols, .5f).GenerateDMatrix();
 
     std::shared_ptr<DMatrix> p_dmat{p_dmat_};
-    p_dmat->Info().labels_.Resize(kRows);
-    auto &h_labels = p_dmat->Info().labels_.HostVector();
+    p_dmat->Info().labels.Reshape(kRows);
+    auto &h_labels = p_dmat->Info().labels.Data()->HostVector();
 
     std::uniform_int_distribution<size_t> categorical(0, kClasses - 1);
     auto& rnd = common::GlobalRandom();
@@ -619,6 +654,9 @@ TEST_F(MultiClassesSerializationTest, GpuHist) {
                             // different result (1e-7) with CPU predictor for some
                             // entries.
                             {"predictor", "gpu_predictor"},
+                            // Mitigate the difference caused by hardware fused multiply
+                            // add to tree weight during update prediction cache.
+                            {"learning_rate", "1.0"},
                             {"tree_method", "gpu_hist"}},
                            fmap_, p_dmat_);
 
@@ -629,7 +667,8 @@ TEST_F(MultiClassesSerializationTest, GpuHist) {
                             {"max_depth", std::to_string(kClasses)},
                             // GPU_Hist has higher floating point error. 1e-6 doesn't work
                             // after num_parallel_tree goes to 4
-                            {"num_parallel_tree", "3"},
+                            {"num_parallel_tree", "4"},
+                            {"learning_rate", "1.0"},
                             {"tree_method", "gpu_hist"}},
                            fmap_, p_dmat_);
 
@@ -637,6 +676,7 @@ TEST_F(MultiClassesSerializationTest, GpuHist) {
                             {"num_class", std::to_string(kClasses)},
                             {"seed", "0"},
                             {"nthread", "1"},
+                            {"learning_rate", "1.0"},
                             {"max_depth", std::to_string(kClasses)},
                             {"tree_method", "gpu_hist"}},
                            fmap_, p_dmat_);

@@ -6,16 +6,11 @@
     <parent>
         <groupId>ai.h2o</groupId>
         <artifactId>xgboost-jvm_2.12</artifactId>
-        <version>1.5.2</version>
+        <version>1.6.1</version>
     </parent>
     <artifactId>xgboost4j-gpu_2.12</artifactId>
-    <version>1.5.2</version>
+    <version>1.6.1</version>
     <packaging>jar</packaging>
-
-    <properties>
-      <cudf.version>21.08.2</cudf.version>
-      <cudf.classifier>cuda11</cudf.classifier>
-    </properties>
 
     <dependencies>
         <dependency>
@@ -24,11 +19,6 @@
           <version>${cudf.version}</version>
           <classifier>${cudf.classifier}</classifier>
           <scope>provided</scope>
-        </dependency>
-        <dependency>
-          <groupId>com.fasterxml.jackson.core</groupId>
-          <artifactId>jackson-databind</artifactId>
-          <version>2.10.5.1</version>
         </dependency>
         <dependency>
             <groupId>org.apache.hadoop</groupId>

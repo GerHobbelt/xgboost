@@ -6,11 +6,11 @@
     <!--parent>
         <groupId>ai.h2o</groupId>
         <artifactId>xgboost-jvm_2.12</artifactId>
-        <version>1.5.2</version>
+        <version>1.6.1</version>
     </parent-->
     <groupId>ai.h2o</groupId>
     <artifactId>xgboost4j_2.12</artifactId>
-    <version>1.5.2</version>
+    <version>1.6.1</version>
     <packaging>jar</packaging>
     <name>xgboost4j</name>
 
@@ -151,7 +151,7 @@
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
-            <version>4.13.1</version>
+            <version>4.13.2</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -261,8 +261,6 @@
                             <argument>create_jni.py</argument>
                             <argument>--log-capi-invocation</argument>
                             <argument>${log.capi.invocation}</argument>
-                            <argument>--use-cuda</argument>
-                            <argument>${use.cuda}</argument>
                           </arguments>
                           <workingDirectory>${user.dir}/..</workingDirectory>
                       </configuration>

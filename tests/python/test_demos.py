@@ -45,8 +45,8 @@ def test_sklearn_demo():
     script = os.path.join(PYTHON_DEMO_DIR, 'sklearn_examples.py')
     cmd = ['python', script]
     subprocess.check_call(cmd)
-    assert os.path.exists('best_boston.pkl')
-    os.remove('best_boston.pkl')
+    assert os.path.exists('best_calif.pkl')
+    os.remove('best_calif.pkl')
 
 
 @pytest.mark.skipif(**tm.no_sklearn())
@@ -87,12 +87,6 @@ def test_generalized_linear_model_demo():
     subprocess.check_call(cmd)
 
 
-def test_custom_objective_demo():
-    script = os.path.join(PYTHON_DEMO_DIR, 'custom_objective.py')
-    cmd = ['python', script]
-    subprocess.check_call(cmd)
-
-
 def test_cross_validation_demo():
     script = os.path.join(PYTHON_DEMO_DIR, 'cross_validation.py')
     cmd = ['python', script]
@@ -121,6 +115,7 @@ def test_aft_demo():
     os.remove('aft_model.json')
 
 
+@pytest.mark.skipif(**tm.no_matplotlib())
 def test_callbacks_demo():
     script = os.path.join(PYTHON_DEMO_DIR, 'callbacks.py')
     cmd = ['python', script, '--plot=0']
@@ -130,6 +125,14 @@ def test_callbacks_demo():
 def test_continuation_demo():
     script = os.path.join(PYTHON_DEMO_DIR, 'continuation.py')
     cmd = ['python', script]
+    subprocess.check_call(cmd)
+
+
+@pytest.mark.skipif(**tm.no_sklearn())
+@pytest.mark.skipif(**tm.no_matplotlib())
+def test_multioutput_reg() -> None:
+    script = os.path.join(PYTHON_DEMO_DIR, "multioutput_regression.py")
+    cmd = ['python', script, "--plot=0"]
     subprocess.check_call(cmd)
 
 

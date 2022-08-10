@@ -45,8 +45,8 @@ void TestTrainingPrediction(size_t rows, size_t bins,
 
   std::unique_ptr<Learner> learner;
   auto train = [&](std::string predictor, HostDeviceVector<float> *out) {
-    auto &h_label = p_hist->Info().labels_.HostVector();
-    h_label.resize(rows);
+    p_hist->Info().labels.Reshape(rows, 1);
+    auto &h_label = p_hist->Info().labels.Data()->HostVector();
 
     for (size_t i = 0; i < rows; ++i) {
       h_label[i] = i % kClasses;
@@ -214,13 +214,13 @@ void TestCategoricalPrediction(std::string name) {
   float left_weight = 1.3f;
   float right_weight = 1.7f;
 
-  gbm::GBTreeModel model(&param);
+  GenericParameter ctx;
+  ctx.UpdateAllowUnknown(Args{});
+  gbm::GBTreeModel model(&param, &ctx);
   GBTreeModelForTest(&model, split_ind, split_cat, left_weight, right_weight);
 
-  GenericParameter runtime;
-  runtime.gpu_id = 0;
-  std::unique_ptr<Predictor> predictor{
-      Predictor::Create(name.c_str(), &runtime)};
+  ctx.UpdateAllowUnknown(Args{{"gpu_id", "0"}});
+  std::unique_ptr<Predictor> predictor{Predictor::Create(name.c_str(), &ctx)};
 
   std::vector<float> row(kCols);
   row[split_ind] = split_cat;
@@ -258,13 +258,14 @@ void TestCategoricalPredictLeaf(StringView name) {
   float left_weight = 1.3f;
   float right_weight = 1.7f;
 
-  gbm::GBTreeModel model(&param);
+  GenericParameter ctx;
+  ctx.UpdateAllowUnknown(Args{});
+
+  gbm::GBTreeModel model(&param, &ctx);
   GBTreeModelForTest(&model, split_ind, split_cat, left_weight, right_weight);
 
-  GenericParameter runtime;
-  runtime.gpu_id = 0;
-  std::unique_ptr<Predictor> predictor{
-      Predictor::Create(name.c_str(), &runtime)};
+  ctx.gpu_id = 0;
+  std::unique_ptr<Predictor> predictor{Predictor::Create(name.c_str(), &ctx)};
 
   std::vector<float> row(kCols);
   row[split_ind] = split_cat;

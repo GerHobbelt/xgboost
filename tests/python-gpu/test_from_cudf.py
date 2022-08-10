@@ -5,6 +5,7 @@ import pytest
 
 sys.path.append("tests/python")
 import testing as tm
+from test_dmatrix import set_base_margin_info
 
 
 def dmatrix_from_cudf(input_type, DMatrixT, missing=np.NAN):
@@ -59,8 +60,9 @@ def _test_from_cudf(DMatrixT):
     assert dtrain.feature_names == ['x']
     assert dtrain.feature_types == ['int']
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match=r".*multi.*"):
         dtrain = DMatrixT(cd, label=cd)
+        xgb.train({"tree_method": "gpu_hist", "objective": "multi:softprob"}, dtrain)
 
     # Test when number of elements is less than 8
     X = cudf.DataFrame({'x': cudf.Series([0, 1, 2, np.NAN, 4],
@@ -141,6 +143,8 @@ def _test_cudf_metainfo(DMatrixT):
     assert np.array_equal(dmat.get_float_info('base_margin'),
                           dmat_cudf.get_float_info('base_margin'))
     assert np.array_equal(dmat.get_uint_info('group_ptr'), dmat_cudf.get_uint_info('group_ptr'))
+
+    set_base_margin_info(df, DMatrixT, "gpu_hist")
 
 
 class TestFromColumnar:
@@ -239,7 +243,7 @@ def test_cudf_training_with_sklearn():
     y_cudf_series = ss(data=y.iloc[:, 0])
 
     for y_obj in [y_cudf, y_cudf_series]:
-        clf = xgb.XGBClassifier(gpu_id=0, tree_method='gpu_hist', use_label_encoder=False)
+        clf = xgb.XGBClassifier(gpu_id=0, tree_method='gpu_hist')
         clf.fit(X_cudf, y_obj, sample_weight=cudf_weights, base_margin=cudf_base_margin,
                 eval_set=[(X_cudf, y_obj)])
         pred = clf.predict(X_cudf)

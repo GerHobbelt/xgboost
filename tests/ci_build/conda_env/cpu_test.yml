@@ -8,7 +8,7 @@ dependencies:
 - pyyaml
 - cpplint
 - pylint
-- numpy=1.19.4
+- numpy
 - scipy
 - scikit-learn
 - pandas
@@ -32,9 +32,13 @@ dependencies:
 - awscli
 - numba
 - llvmlite
+- py-ubjson
+- cffi
+- pyarrow
+- protobuf<=3.20
 - pip:
   - shap
   - ipython                     # required by shap at import time.
-  - guzzle_sphinx_theme
+  - sphinx_rtd_theme
   - datatable
   - modin[all]

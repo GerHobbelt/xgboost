@@ -40,8 +40,8 @@ pipeline {
       steps {
         script {
           parallel ([
-            'build-win64-cuda10.1': { BuildWin64() },
-            'build-rpkg-win64-cuda10.1': { BuildRPackageWithCUDAWin64() }
+            'build-win64-cuda11.0': { BuildWin64() },
+            'build-rpkg-win64-cuda11.0': { BuildRPackageWithCUDAWin64() }
           ])
         }
       }
@@ -51,7 +51,7 @@ pipeline {
       steps {
         script {
           parallel ([
-            'test-win64-cuda10.1': { TestWin64() },
+            'test-win64-cuda11.0': { TestWin64() },
           ])
         }
       }
@@ -75,7 +75,7 @@ def checkoutSrcs() {
 }
 
 def BuildWin64() {
-  node('win64 && cuda10_unified') {
+  node('win64 && cuda11_unified') {
     deleteDir()
     unstash name: 'srcs'
     echo "Building XGBoost for Windows AMD64 target..."
@@ -107,7 +107,7 @@ def BuildWin64() {
     stash name: 'xgboost_whl', includes: 'python-package/dist/*.whl'
     if (env.BRANCH_NAME == 'master' || env.BRANCH_NAME.startsWith('release')) {
       echo 'Uploading Python wheel...'
-      path = ("${BRANCH_NAME}" == 'master') ? '' : "${BRANCH_NAME}/"
+      path = "${BRANCH_NAME}/"
       s3Upload bucket: 'xgboost-nightly-builds', path: path, acl: 'PublicRead', workingDir: 'python-package/dist', includePathPattern:'**/*.whl'
     }
     echo 'Stashing C++ test executable (testxgboost)...'
@@ -118,7 +118,7 @@ def BuildWin64() {
 }
 
 def BuildRPackageWithCUDAWin64() {
-  node('win64 && cuda10_unified') {
+  node('win64 && cuda11_unified') {
     deleteDir()
     unstash name: 'srcs'
     bat "nvcc --version"
@@ -127,7 +127,7 @@ def BuildRPackageWithCUDAWin64() {
       bash tests/ci_build/build_r_pkg_with_cuda_win64.sh ${commit_id}
       """
       echo 'Uploading R tarball...'
-      path = ("${BRANCH_NAME}" == 'master') ? '' : "${BRANCH_NAME}/"
+      path = "${BRANCH_NAME}/"
       s3Upload bucket: 'xgboost-nightly-builds', path: path, acl: 'PublicRead', includePathPattern:'xgboost_r_gpu_win64_*.tar.gz'
     }
     deleteDir()
@@ -135,7 +135,7 @@ def BuildRPackageWithCUDAWin64() {
 }
 
 def TestWin64() {
-  node('win64 && cuda10_unified') {
+  node('win64 && cuda11_unified') {
     deleteDir()
     unstash name: 'srcs'
     unstash name: 'xgboost_whl'
@@ -153,9 +153,9 @@ def TestWin64() {
     conda activate ${env_name} && for /R %%i in (python-package\\dist\\*.whl) DO python -m pip install "%%i"
     """
     echo "Running Python tests..."
-    bat "conda activate ${env_name} && python -m pytest -v -s -rxXs --fulltrace tests\\python"
+    bat "conda activate ${env_name} && python -X faulthandler -m pytest -v -s -rxXs --fulltrace tests\\python"
     bat """
-    conda activate ${env_name} && python -m pytest -v -s -rxXs --fulltrace -m "(not slow) and (not mgpu)" tests\\python-gpu
+    conda activate ${env_name} && python -X faulthandler -m pytest -v -s -rxXs --fulltrace -m "(not slow) and (not mgpu)" tests\\python-gpu
     """
     bat "conda env remove --name ${env_name}"
     deleteDir()

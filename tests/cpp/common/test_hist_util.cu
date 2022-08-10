@@ -1,5 +1,5 @@
 /*!
- * Copyright 2019-2021 by XGBoost Contributors
+ * Copyright 2019-2022 by XGBoost Contributors
  */
 #include <dmlc/filesystem.h>
 #include <gtest/gtest.h>
@@ -28,7 +28,7 @@ namespace common {
 template <typename AdapterT>
 HistogramCuts GetHostCuts(AdapterT *adapter, int num_bins, float missing) {
   data::SimpleDMatrix dmat(adapter, missing, 1);
-  HistogramCuts cuts = SketchOnDMatrix(&dmat, num_bins);
+  HistogramCuts cuts = SketchOnDMatrix(&dmat, num_bins, common::OmpGetNumThreads(0));
   return cuts;
 }
 
@@ -40,7 +40,7 @@ TEST(HistUtil, DeviceSketch) {
   auto dmat = GetDMatrixFromData(x, num_rows, num_columns);
 
   auto device_cuts = DeviceSketch(0, dmat.get(), num_bins);
-  HistogramCuts host_cuts = SketchOnDMatrix(dmat.get(), num_bins);
+  HistogramCuts host_cuts = SketchOnDMatrix(dmat.get(), num_bins, common::OmpGetNumThreads(0));
 
   EXPECT_EQ(device_cuts.Values(), host_cuts.Values());
   EXPECT_EQ(device_cuts.Ptrs(), host_cuts.Ptrs());
@@ -520,7 +520,7 @@ TEST(HistUtil, DeviceSketchFromGroupWeights) {
   for (size_t i = 0; i < kGroups; ++i) {
     groups[i] = kRows / kGroups;
   }
-  m->Info().SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
+  m->SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
   HistogramCuts weighted_cuts = DeviceSketch(0, m.get(), kBins, 0);
 
   h_weights.clear();
@@ -550,6 +550,7 @@ void TestAdapterSketchFromWeights(bool with_group) {
       RandomDataGenerator{kRows, kCols, 0}.Device(0).GenerateArrayInterface(
           &storage);
   MetaInfo info;
+  Context ctx;
   auto& h_weights = info.weights_.HostVector();
   if (with_group) {
     h_weights.resize(kGroups);
@@ -563,7 +564,7 @@ void TestAdapterSketchFromWeights(bool with_group) {
     for (size_t i = 0; i < kGroups; ++i) {
       groups[i] = kRows / kGroups;
     }
-    info.SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
+    info.SetInfo(ctx, "group", groups.data(), DataType::kUInt32, kGroups);
   }
 
   info.weights_.SetDevice(0);
@@ -582,10 +583,10 @@ void TestAdapterSketchFromWeights(bool with_group) {
 
   auto dmat = GetDMatrixFromData(storage.HostVector(), kRows, kCols);
   if (with_group) {
-    dmat->Info().SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
+    dmat->Info().SetInfo(ctx, "group", groups.data(), DataType::kUInt32, kGroups);
   }
 
-  dmat->Info().SetInfo("weight", h_weights.data(), DataType::kFloat32, h_weights.size());
+  dmat->Info().SetInfo(ctx, "weight", h_weights.data(), DataType::kFloat32, h_weights.size());
   dmat->Info().num_col_ = kCols;
   dmat->Info().num_row_ = kRows;
   ASSERT_EQ(cuts.Ptrs().size(), kCols + 1);

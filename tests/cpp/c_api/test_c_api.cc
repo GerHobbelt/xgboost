@@ -1,5 +1,5 @@
 /*!
- * Copyright 2019-2020 XGBoost contributors
+ * Copyright 2019-2022 XGBoost contributors
  */
 #include <gtest/gtest.h>
 #include <xgboost/version_config.h>
@@ -91,7 +91,8 @@ TEST(CAPI, ConfigIO) {
   for (size_t i = 0; i < labels.size(); ++i) {
     labels[i] = i;
   }
-  p_dmat->Info().labels_.HostVector() = labels;
+  p_dmat->Info().labels.Data()->HostVector() = labels;
+  p_dmat->Info().labels.Reshape(kRows);
 
   std::shared_ptr<Learner> learner { Learner::Create(mat) };
 
@@ -125,7 +126,8 @@ TEST(CAPI, JsonModelIO) {
   for (size_t i = 0; i < labels.size(); ++i) {
     labels[i] = i;
   }
-  p_dmat->Info().labels_.HostVector() = labels;
+  p_dmat->Info().labels.Data()->HostVector() = labels;
+  p_dmat->Info().labels.Reshape(kRows);
 
   std::shared_ptr<Learner> learner { Learner::Create(mat) };
 
@@ -148,6 +150,33 @@ TEST(CAPI, JsonModelIO) {
 
   ASSERT_EQ(model_str_0.front(), '{');
   ASSERT_EQ(model_str_0, model_str_1);
+
+  /**
+   * In memory
+   */
+  bst_ulong len{0};
+  char const *data;
+  XGBoosterSaveModelToBuffer(handle, R"({"format": "ubj"})", &len, &data);
+  ASSERT_GT(len, 3);
+
+  XGBoosterLoadModelFromBuffer(handle, data, len);
+  char const *saved;
+  bst_ulong saved_len{0};
+  XGBoosterSaveModelToBuffer(handle, R"({"format": "ubj"})", &saved_len, &saved);
+  ASSERT_EQ(len, saved_len);
+  auto l = StringView{data, len};
+  auto r = StringView{saved, saved_len};
+  ASSERT_EQ(l.size(), r.size());
+  ASSERT_EQ(l, r);
+
+  std::string buffer;
+  Json::Dump(Json::Load(l, std::ios::binary), &buffer);
+  ASSERT_EQ(model_str_0.size() - 1, buffer.size());
+  ASSERT_EQ(model_str_0.back(), '\0');
+  ASSERT_TRUE(std::equal(model_str_0.begin(), model_str_0.end() - 1, buffer.begin()));
+
+  ASSERT_EQ(XGBoosterSaveModelToBuffer(handle, R"({})", &len, &data), -1);
+  ASSERT_EQ(XGBoosterSaveModelToBuffer(handle, R"({"format": "foo"})", &len, &data), -1);
 }
 
 TEST(CAPI, CatchDMLCError) {
@@ -277,5 +306,14 @@ TEST(CAPI, XGBGlobalConfig) {
     ASSERT_NE(err.find("foo"), std::string::npos);
     ASSERT_EQ(err.find("verbosity"), std::string::npos);
   }
+}
+
+TEST(CAPI, BuildInfo) {
+  char const* out;
+  XGBuildInfo(&out);
+  auto loaded = Json::Load(StringView{out});
+  ASSERT_TRUE(get<Object const>(loaded).find("USE_OPENMP") != get<Object const>(loaded).cend());
+  ASSERT_TRUE(get<Object const>(loaded).find("USE_CUDA") != get<Object const>(loaded).cend());
+  ASSERT_TRUE(get<Object const>(loaded).find("USE_NCCL") != get<Object const>(loaded).cend());
 }
 }  // namespace xgboost

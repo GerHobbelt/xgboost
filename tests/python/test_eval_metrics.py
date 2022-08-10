@@ -177,7 +177,7 @@ class TestEvalMetrics:
                 "objective": "binary:logistic",
             },
             Xy,
-            num_boost_round=8,
+            num_boost_round=1,
         )
         score = booster.predict(Xy)
         skl_auc = roc_auc_score(y, score)
@@ -191,7 +191,7 @@ class TestEvalMetrics:
         np.testing.assert_allclose(skl_auc, auc, rtol=1e-6)
 
     @pytest.mark.skipif(**tm.no_sklearn())
-    @pytest.mark.parametrize("n_samples", [100, 1000])
+    @pytest.mark.parametrize("n_samples", [100, 1000, 10000])
     def test_roc_auc(self, n_samples):
         self.run_roc_auc_binary("hist", n_samples)
 
@@ -229,7 +229,7 @@ class TestEvalMetrics:
                 "num_class": n_classes,
             },
             Xy,
-            num_boost_round=8,
+            num_boost_round=1,
         )
         score = booster.predict(Xy)
         skl_auc = roc_auc_score(
@@ -239,6 +239,7 @@ class TestEvalMetrics:
         np.testing.assert_allclose(skl_auc, auc, rtol=1e-6)
 
         X = rng.randn(*X.shape)
+
         score = booster.predict(xgb.DMatrix(X, weight=weights))
         skl_auc = roc_auc_score(
             y, score, average="weighted", sample_weight=weights, multi_class="ovr"
@@ -247,7 +248,67 @@ class TestEvalMetrics:
         np.testing.assert_allclose(skl_auc, auc, rtol=1e-5)
 
     @pytest.mark.parametrize(
-        "n_samples,weighted", [(4, False), (100, False), (1000, False), (1000, True)]
+        "n_samples,weighted", [(4, False), (100, False), (1000, False), (10000, True)]
     )
     def test_roc_auc_multi(self, n_samples, weighted):
         self.run_roc_auc_multi("hist", n_samples, weighted)
+
+    def run_pr_auc_binary(self, tree_method):
+        from sklearn.metrics import precision_recall_curve, auc
+        from sklearn.datasets import make_classification
+        X, y = make_classification(128, 4, n_classes=2, random_state=1994)
+        clf = xgb.XGBClassifier(tree_method=tree_method, n_estimators=1)
+        clf.fit(X, y, eval_metric="aucpr", eval_set=[(X, y)])
+        evals_result = clf.evals_result()["validation_0"]["aucpr"][-1]
+
+        y_score = clf.predict_proba(X)[:, 1]  # get the positive column
+        precision, recall, _ = precision_recall_curve(y, y_score)
+        prauc = auc(recall, precision)
+        # Interpolation results are slightly different from sklearn, but overall should be
+        # similar.
+        np.testing.assert_allclose(prauc, evals_result, rtol=1e-2)
+
+        clf = xgb.XGBClassifier(tree_method=tree_method, n_estimators=10)
+        clf.fit(X, y, eval_metric="aucpr", eval_set=[(X, y)])
+        evals_result = clf.evals_result()["validation_0"]["aucpr"][-1]
+        np.testing.assert_allclose(0.99, evals_result, rtol=1e-2)
+
+    def test_pr_auc_binary(self):
+        self.run_pr_auc_binary("hist")
+
+    def run_pr_auc_multi(self, tree_method):
+        from sklearn.datasets import make_classification
+        X, y = make_classification(
+            64, 16, n_informative=8, n_classes=3, random_state=1994
+        )
+        clf = xgb.XGBClassifier(tree_method=tree_method, n_estimators=1)
+        clf.fit(X, y, eval_metric="aucpr", eval_set=[(X, y)])
+        evals_result = clf.evals_result()["validation_0"]["aucpr"][-1]
+        # No available implementation for comparison, just check that XGBoost converges to
+        # 1.0
+        clf = xgb.XGBClassifier(tree_method=tree_method, n_estimators=10)
+        clf.fit(X, y, eval_metric="aucpr", eval_set=[(X, y)])
+        evals_result = clf.evals_result()["validation_0"]["aucpr"][-1]
+        np.testing.assert_allclose(1.0, evals_result, rtol=1e-2)
+
+    def test_pr_auc_multi(self):
+        self.run_pr_auc_multi("hist")
+
+    def run_pr_auc_ltr(self, tree_method):
+        from sklearn.datasets import make_classification
+        X, y = make_classification(128, 4, n_classes=2, random_state=1994)
+        ltr = xgb.XGBRanker(tree_method=tree_method, n_estimators=16)
+        groups = np.array([32, 32, 64])
+        ltr.fit(
+            X,
+            y,
+            group=groups,
+            eval_set=[(X, y)],
+            eval_group=[groups],
+            eval_metric="aucpr"
+        )
+        results = ltr.evals_result()["validation_0"]["aucpr"]
+        assert results[-1] >= 0.99
+
+    def test_pr_auc_ltr(self):
+        self.run_pr_auc_ltr("hist")

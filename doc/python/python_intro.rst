@@ -1,12 +1,22 @@
 ###########################
 Python Package Introduction
 ###########################
-This document gives a basic walkthrough of the xgboost package for Python.
+
+This document gives a basic walkthrough of the xgboost package for Python.  The Python
+package is consisted of 3 different interfaces, including native interface, scikit-learn
+interface and dask interface.  For introduction to dask interface please see
+:doc:`/tutorials/dask`.
 
 **List of other Helpful Links**
 
-* `Python walkthrough code collections <https://github.com/dmlc/xgboost/blob/master/demo/guide-python>`_
+* :doc:`/python/examples/index`
 * :doc:`Python API Reference <python_api>`
+
+**Contents**
+
+.. contents::
+  :backlinks: none
+  :local:
 
 Install XGBoost
 ---------------
@@ -22,7 +32,8 @@ To verify your installation, run the following in Python:
 
 Data Interface
 --------------
-The XGBoost python module is able to load data from many types of different formats, including:
+The XGBoost python module is able to load data from many different types of data format,
+including:
 
 - NumPy 2D array
 - SciPy 2D sparse array
@@ -203,7 +214,7 @@ If early stopping is enabled during training, you can get predictions from the b
 
 .. code-block:: python
 
-  ypred = bst.predict(dtest, iteration_range=(0, bst.best_iteration))
+  ypred = bst.predict(dtest, iteration_range=(0, bst.best_iteration + 1))
 
 Plotting
 --------

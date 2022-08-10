@@ -1,7 +1,7 @@
 import xgboost as xgb
 from xgboost.data import SingleBatchInternalIter as SingleBatch
 import numpy as np
-from testing import IteratorForTest
+from testing import IteratorForTest, non_increasing
 from typing import Tuple, List
 import pytest
 from hypothesis import given, strategies, settings
@@ -68,9 +68,14 @@ def run_data_iterator(
     n_features: int,
     n_batches: int,
     tree_method: str,
+    subsample: bool,
     use_cupy: bool,
 ) -> None:
     n_rounds = 2
+    # The test is more difficult to pass if the subsample rate is smaller as the root_sum
+    # is accumulated in parallel.  Reductions with different number of entries lead to
+    # different floating point errors.
+    subsample_rate = 0.8 if subsample else 1.0
 
     it = IteratorForTest(
         *make_batches(n_samples_per_batch, n_features, n_batches, use_cupy)
@@ -84,16 +89,27 @@ def run_data_iterator(
     assert Xy.num_row() == n_samples_per_batch * n_batches
     assert Xy.num_col() == n_features
 
+    parameters = {
+        "tree_method": tree_method,
+        "max_depth": 2,
+        "subsample": subsample_rate,
+        "seed": 0,
+    }
+
+    if tree_method == "gpu_hist":
+        parameters["sampling_method"] = "gradient_based"
+
     results_from_it: xgb.callback.EvaluationMonitor.EvalsLog = {}
     from_it = xgb.train(
-        {"tree_method": tree_method, "max_depth": 2},
+        parameters,
         Xy,
         num_boost_round=n_rounds,
         evals=[(Xy, "Train")],
         evals_result=results_from_it,
         verbose_eval=False,
     )
-    it_predt = from_it.predict(Xy)
+    if not subsample:
+        assert non_increasing(results_from_it["Train"]["rmse"])
 
     X, y = it.as_arrays()
     Xy = xgb.DMatrix(X, y)
@@ -102,7 +118,7 @@ def run_data_iterator(
 
     results_from_arrays: xgb.callback.EvaluationMonitor.EvalsLog = {}
     from_arrays = xgb.train(
-        {"tree_method": tree_method, "max_depth": 2},
+        parameters,
         Xy,
         num_boost_round=n_rounds,
         evals=[(Xy, "Train")],
@@ -110,13 +126,14 @@ def run_data_iterator(
         verbose_eval=False,
     )
     arr_predt = from_arrays.predict(Xy)
+    if not subsample:
+        assert non_increasing(results_from_arrays["Train"]["rmse"])
 
-    if tree_method != "gpu_hist":
-        rtol = 1e-1  # flaky
-    else:
-        # Model can be sensitive to quantiles, use 1e-2 to relax the test.
-        np.testing.assert_allclose(it_predt, arr_predt, rtol=1e-2)
-        rtol = 1e-6
+    rtol = 1e-2
+    # CPU sketching is more memory efficient but less consistent due to small chunks
+    it_predt = from_it.predict(Xy)
+    arr_predt = from_arrays.predict(Xy)
+    np.testing.assert_allclose(it_predt, arr_predt, rtol=rtol)
 
     np.testing.assert_allclose(
         results_from_it["Train"]["rmse"],
@@ -126,11 +143,21 @@ def run_data_iterator(
 
 
 @given(
-    strategies.integers(0, 1024), strategies.integers(1, 7), strategies.integers(0, 13)
+    strategies.integers(0, 1024),
+    strategies.integers(1, 7),
+    strategies.integers(0, 13),
+    strategies.booleans(),
 )
-@settings(deadline=None)
+@settings(deadline=None, print_blob=True)
 def test_data_iterator(
-    n_samples_per_batch: int, n_features: int, n_batches: int
+    n_samples_per_batch: int,
+    n_features: int,
+    n_batches: int,
+    subsample: bool,
 ) -> None:
-    run_data_iterator(n_samples_per_batch, n_features, n_batches, "approx", False)
-    run_data_iterator(n_samples_per_batch, n_features, n_batches, "hist", False)
+    run_data_iterator(
+        n_samples_per_batch, n_features, n_batches, "approx", subsample, False
+    )
+    run_data_iterator(
+        n_samples_per_batch, n_features, n_batches, "hist", subsample, False
+    )

@@ -1,9 +1,51 @@
 /*!
- * Copyright 2018-2019 XGBoost contributors
+ * Copyright 2018-2022 by XGBoost contributors
  */
+#include <xgboost/json.h>
 #include <xgboost/metric.h>
+
 #include <map>
+#include <memory>
+
+#include "../../../src/common/linalg_op.h"
 #include "../helpers.h"
+
+namespace xgboost {
+namespace {
+inline void CheckDeterministicMetricElementWise(StringView name, int32_t device) {
+  auto lparam = CreateEmptyGenericParam(device);
+  std::unique_ptr<Metric> metric{Metric::Create(name.c_str(), &lparam)};
+
+  HostDeviceVector<float> predts;
+  size_t n_samples = 2048;
+
+  MetaInfo info;
+  info.labels.Reshape(n_samples, 1);
+  info.num_row_ = n_samples;
+  auto &h_labels = info.labels.Data()->HostVector();
+  auto &h_predts = predts.HostVector();
+
+  SimpleLCG lcg;
+  SimpleRealUniformDistribution<float> dist{0.0f, 1.0f};
+
+  h_labels.resize(n_samples);
+  h_predts.resize(n_samples);
+
+  for (size_t i = 0; i < n_samples; ++i) {
+    h_predts[i] = dist(&lcg);
+    h_labels[i] = dist(&lcg);
+  }
+
+  auto result = metric->Eval(predts, info, false);
+  for (size_t i = 0; i < 8; ++i) {
+    ASSERT_EQ(metric->Eval(predts, info, false), result);
+  }
+}
+}  // anonymous namespace
+}  // namespace xgboost
+
+namespace xgboost {
+namespace metric {
 
 TEST(Metric, DeclareUnifiedTest(RMSE)) {
   auto lparam = xgboost::CreateEmptyGenericParam(GPUIDX);
@@ -26,6 +68,8 @@ TEST(Metric, DeclareUnifiedTest(RMSE)) {
                             {  1,   2,   9,   8}),
               0.6708f, 0.001f);
   delete metric;
+
+  xgboost::CheckDeterministicMetricElementWise(xgboost::StringView{"rmse"}, GPUIDX);
 }
 
 TEST(Metric, DeclareUnifiedTest(RMSLE)) {
@@ -49,6 +93,8 @@ TEST(Metric, DeclareUnifiedTest(RMSLE)) {
                             {   0,    1,    2,    9,    8}),
               0.2415f, 1e-4);
   delete metric;
+
+  xgboost::CheckDeterministicMetricElementWise(xgboost::StringView{"rmsle"}, GPUIDX);
 }
 
 TEST(Metric, DeclareUnifiedTest(MAE)) {
@@ -72,6 +118,8 @@ TEST(Metric, DeclareUnifiedTest(MAE)) {
                             {  1,   2,   9,   8}),
               0.54f, 0.001f);
   delete metric;
+
+  xgboost::CheckDeterministicMetricElementWise(xgboost::StringView{"mae"}, GPUIDX);
 }
 
 TEST(Metric, DeclareUnifiedTest(MAPE)) {
@@ -95,29 +143,39 @@ TEST(Metric, DeclareUnifiedTest(MAPE)) {
                             {  1,   2,   9,   8}),
               1.3250f, 0.001f);
   delete metric;
+
+  xgboost::CheckDeterministicMetricElementWise(xgboost::StringView{"mape"}, GPUIDX);
 }
 
 TEST(Metric, DeclareUnifiedTest(MPHE)) {
   auto lparam = xgboost::CreateEmptyGenericParam(GPUIDX);
-  xgboost::Metric * metric = xgboost::Metric::Create("mphe", &lparam);
+  std::unique_ptr<xgboost::Metric> metric{xgboost::Metric::Create("mphe", &lparam)};
   metric->Configure({});
   ASSERT_STREQ(metric->Name(), "mphe");
-  EXPECT_NEAR(GetMetricEval(metric, {0, 1}, {0, 1}), 0, 1e-10);
-  EXPECT_NEAR(GetMetricEval(metric,
+  EXPECT_NEAR(GetMetricEval(metric.get(), {0, 1}, {0, 1}), 0, 1e-10);
+  EXPECT_NEAR(GetMetricEval(metric.get(),
                             {0.1f, 0.9f, 0.1f, 0.9f},
                             {  0,   0,   1,   1}),
               0.1751f, 1e-4);
-  EXPECT_NEAR(GetMetricEval(metric,
+  EXPECT_NEAR(GetMetricEval(metric.get(),
                             {0.1f, 0.9f, 0.1f, 0.9f},
                             {  0,   0,   1,   1},
                             { -1,   1,   9,  -9}),
               3.4037f, 1e-4);
-  EXPECT_NEAR(GetMetricEval(metric,
+  EXPECT_NEAR(GetMetricEval(metric.get(),
                             {0.1f, 0.9f, 0.1f, 0.9f},
                             {  0,   0,   1,   1},
                             {  1,   2,   9,   8}),
               0.1922f, 1e-4);
-  delete metric;
+
+  xgboost::CheckDeterministicMetricElementWise(xgboost::StringView{"mphe"}, GPUIDX);
+
+  metric->Configure({{"huber_slope", "0.1"}});
+  EXPECT_NEAR(GetMetricEval(metric.get(),
+                            {0.1f, 0.9f, 0.1f, 0.9f},
+                            {  0,   0,   1,   1},
+                            {  1,   2,   9,   8}),
+              0.0461686f, 1e-4);
 }
 
 TEST(Metric, DeclareUnifiedTest(LogLoss)) {
@@ -145,6 +203,8 @@ TEST(Metric, DeclareUnifiedTest(LogLoss)) {
                             {  1,   2,   9,   8}),
               1.3138f, 0.001f);
   delete metric;
+
+  xgboost::CheckDeterministicMetricElementWise(xgboost::StringView{"logloss"}, GPUIDX);
 }
 
 TEST(Metric, DeclareUnifiedTest(Error)) {
@@ -197,6 +257,8 @@ TEST(Metric, DeclareUnifiedTest(Error)) {
                             {  1,   2,   9,   8}),
               0.45f, 0.001f);
   delete metric;
+
+  xgboost::CheckDeterministicMetricElementWise(xgboost::StringView{"error@0.5"}, GPUIDX);
 }
 
 TEST(Metric, DeclareUnifiedTest(PoissionNegLogLik)) {
@@ -224,4 +286,30 @@ TEST(Metric, DeclareUnifiedTest(PoissionNegLogLik)) {
                             {  1,   2,   9,   8}),
               1.5783f, 0.001f);
   delete metric;
+
+  xgboost::CheckDeterministicMetricElementWise(xgboost::StringView{"poisson-nloglik"}, GPUIDX);
 }
+
+TEST(Metric, DeclareUnifiedTest(MultiRMSE)) {
+  size_t n_samples = 32, n_targets = 8;
+  linalg::Tensor<float, 2> y{{n_samples, n_targets}, GPUIDX};
+  auto &h_y = y.Data()->HostVector();
+  std::iota(h_y.begin(), h_y.end(), 0);
+
+  HostDeviceVector<float> predt(n_samples * n_targets, 0);
+
+  auto ctx = xgboost::CreateEmptyGenericParam(GPUIDX);
+  std::unique_ptr<Metric> metric{Metric::Create("rmse", &ctx)};
+  metric->Configure({});
+
+  auto loss = GetMultiMetricEval(metric.get(), predt, y);
+  std::vector<float> weights(n_samples, 1);
+  auto loss_w = GetMultiMetricEval(metric.get(), predt, y, weights);
+
+  std::transform(h_y.cbegin(), h_y.cend(), h_y.begin(), [](auto &v) { return v * v; });
+  auto ret = std::sqrt(std::accumulate(h_y.cbegin(), h_y.cend(), 1.0, std::plus<>{}) / h_y.size());
+  ASSERT_FLOAT_EQ(ret, loss);
+  ASSERT_FLOAT_EQ(ret, loss_w);
+}
+}  // namespace metric
+}  // namespace xgboost

@@ -1,5 +1,5 @@
 /*!
- * Copyright 2016-2020 XGBoost contributors
+ * Copyright 2016-2022 by XGBoost contributors
  */
 #include <dmlc/filesystem.h>
 #include <xgboost/logging.h>
@@ -100,7 +100,8 @@ void CheckObjFunction(std::unique_ptr<xgboost::ObjFunction> const& obj,
                       std::vector<xgboost::bst_float> out_hess) {
   xgboost::MetaInfo info;
   info.num_row_ = labels.size();
-  info.labels_.HostVector() = labels;
+  info.labels =
+      xgboost::linalg::Tensor<float, 2>{labels.cbegin(), labels.cend(), {labels.size()}, -1};
   info.weights_.HostVector() = weights;
 
   CheckObjFunctionImpl(obj, preds, labels, weights, info, out_grad, out_hess);
@@ -135,21 +136,34 @@ void CheckRankingObjFunction(std::unique_ptr<xgboost::ObjFunction> const& obj,
                              std::vector<xgboost::bst_float> out_hess) {
   xgboost::MetaInfo info;
   info.num_row_ = labels.size();
-  info.labels_.HostVector() = labels;
+  info.labels = xgboost::linalg::Tensor<float, 2>{
+      labels.cbegin(), labels.cend(), {labels.size(), static_cast<size_t>(1)}, -1};
   info.weights_.HostVector() = weights;
   info.group_ptr_ = groups;
 
   CheckObjFunctionImpl(obj, preds, labels, weights, info, out_grad, out_hess);
 }
 
-xgboost::bst_float GetMetricEval(xgboost::Metric * metric,
+xgboost::bst_float GetMetricEval(xgboost::Metric* metric,
                                  xgboost::HostDeviceVector<xgboost::bst_float> const& preds,
                                  std::vector<xgboost::bst_float> labels,
                                  std::vector<xgboost::bst_float> weights,
                                  std::vector<xgboost::bst_uint> groups) {
+  return GetMultiMetricEval(
+      metric, preds,
+      xgboost::linalg::Tensor<float, 2>{labels.begin(), labels.end(), {labels.size()}, -1}, weights,
+      groups);
+}
+
+double GetMultiMetricEval(xgboost::Metric* metric,
+                          xgboost::HostDeviceVector<xgboost::bst_float> const& preds,
+                          xgboost::linalg::Tensor<float, 2> const& labels,
+                          std::vector<xgboost::bst_float> weights,
+                          std::vector<xgboost::bst_uint> groups) {
   xgboost::MetaInfo info;
-  info.num_row_ = labels.size();
-  info.labels_.HostVector() = labels;
+  info.num_row_ = labels.Shape(0);
+  info.labels.Reshape(labels.Shape()[0], labels.Shape()[1]);
+  info.labels.Data()->Copy(*labels.Data());
   info.weights_.HostVector() = weights;
   info.group_ptr_ = groups;
 
@@ -169,15 +183,13 @@ bool IsNear(std::vector<xgboost::bst_float>::const_iterator _beg1,
 }
 
 SimpleLCG::StateType SimpleLCG::operator()() {
-  state_ = (alpha_ * state_) % mod_;
+  state_ = (alpha_ * state_ + (state_ == 0 ? kDefaultInit : 0)) % mod_;
   return state_;
 }
-SimpleLCG::StateType SimpleLCG::Min() const {
-  return seed_ * alpha_;
-}
-SimpleLCG::StateType SimpleLCG::Max() const {
-  return max_value_;
-}
+SimpleLCG::StateType SimpleLCG::Min() const { return min(); }
+SimpleLCG::StateType SimpleLCG::Max() const { return max(); }
+// Make sure it's compile time constant.
+static_assert(SimpleLCG::max() - SimpleLCG::min(), "");
 
 void RandomDataGenerator::GenerateDense(HostDeviceVector<float> *out) const {
   xgboost::SimpleRealUniformDistribution<bst_float> dist(lower_, upper_);
@@ -230,6 +242,7 @@ RandomDataGenerator::GenerateArrayInterfaceBatch(
     if (device_ >= 0) {
       array_interface["data"][0] =
           Integer(reinterpret_cast<int64_t>(storage->DevicePointer() + offset));
+      array_interface["stream"] = Null{};
     } else {
       array_interface["data"][0] =
           Integer(reinterpret_cast<int64_t>(storage->HostPointer() + offset));
@@ -242,7 +255,7 @@ RandomDataGenerator::GenerateArrayInterfaceBatch(
     array_interface["shape"][1] = cols_;
 
     array_interface["typestr"] = String("<f4");
-    array_interface["version"] = 1;
+    array_interface["version"] = 3;
     return array_interface;
   };
 
@@ -291,6 +304,7 @@ void RandomDataGenerator::GenerateCSR(
 
   xgboost::SimpleRealUniformDistribution<bst_float> dist(lower_, upper_);
   float sparsity = sparsity_ * (upper_ - lower_) + lower_;
+  SimpleRealUniformDistribution<bst_float> cat(0.0, max_cat_);
 
   h_rptr.emplace_back(0);
   for (size_t i = 0; i < rows_; ++i) {
@@ -298,7 +312,11 @@ void RandomDataGenerator::GenerateCSR(
     for (size_t j = 0; j < cols_; ++j) {
       auto g = dist(&lcg);
       if (g >= sparsity) {
-        g = dist(&lcg);
+        if (common::IsCat(ft_, j)) {
+          g = common::AsCat(cat(&lcg));
+        } else {
+          g = dist(&lcg);
+        }
         h_value.emplace_back(g);
         rptr++;
         h_cols.emplace_back(j);
@@ -336,21 +354,27 @@ RandomDataGenerator::GenerateDMatrix(bool with_label, bool float_label,
   if (with_label) {
     RandomDataGenerator gen(rows_, 1, 0);
     if (!float_label) {
-      gen.Lower(0).Upper(classes).GenerateDense(&out->Info().labels_);
-      auto& h_labels = out->Info().labels_.HostVector();
+      gen.Lower(0).Upper(classes).GenerateDense(out->Info().labels.Data());
+      out->Info().labels.Reshape(this->rows_);
+      auto& h_labels = out->Info().labels.Data()->HostVector();
       for (auto& v : h_labels) {
         v = static_cast<float>(static_cast<uint32_t>(v));
       }
     } else {
-      gen.GenerateDense(&out->Info().labels_);
+      gen.GenerateDense(out->Info().labels.Data());
+      out->Info().labels.Reshape(this->rows_);
     }
   }
   if (device_ >= 0) {
-    out->Info().labels_.SetDevice(device_);
+    out->Info().labels.SetDevice(device_);
+    out->Info().feature_types.SetDevice(device_);
     for (auto const& page : out->GetBatches<SparsePage>()) {
       page.data.SetDevice(device_);
       page.offset.SetDevice(device_);
     }
+  }
+  if (!ft_.empty()) {
+    out->Info().feature_types.HostVector() = ft_;
   }
   return out;
 }
@@ -360,6 +384,32 @@ GetDMatrixFromData(const std::vector<float> &x, int num_rows, int num_columns){
   data::DenseAdapter adapter(x.data(), num_rows, num_columns);
   return std::shared_ptr<DMatrix>(new data::SimpleDMatrix(
       &adapter, std::numeric_limits<float>::quiet_NaN(), 1));
+}
+
+std::unique_ptr<DMatrix> CreateSparsePageDMatrix(bst_row_t n_samples, bst_feature_t n_features,
+                                                 size_t n_batches, std::string prefix) {
+  CHECK_GE(n_samples, n_batches);
+  ArrayIterForTest iter(0, n_samples, n_features, n_batches);
+
+  std::unique_ptr<DMatrix> dmat{
+      DMatrix::Create(static_cast<DataIterHandle>(&iter), iter.Proxy(), Reset, Next,
+                      std::numeric_limits<float>::quiet_NaN(), omp_get_max_threads(), prefix)};
+
+  auto row_page_path =
+      data::MakeId(prefix, dynamic_cast<data::SparsePageDMatrix*>(dmat.get())) + ".row.page";
+  EXPECT_TRUE(FileExists(row_page_path)) << row_page_path;
+
+  // Loop over the batches and count the number of pages
+  int64_t batch_count = 0;
+  int64_t row_count = 0;
+  for (const auto& batch : dmat->GetBatches<xgboost::SparsePage>()) {
+    batch_count++;
+    row_count += batch.Size();
+  }
+
+  EXPECT_GE(batch_count, n_batches);
+  EXPECT_EQ(row_count, dmat->Info().num_row_);
+  return dmat;
 }
 
 std::unique_ptr<DMatrix> CreateSparsePageDMatrix(size_t n_entries,
@@ -456,8 +506,9 @@ std::unique_ptr<DMatrix> CreateSparsePageDMatrixWithRC(
   return dmat;
 }
 
-gbm::GBTreeModel CreateTestModel(LearnerModelParam const* param, size_t n_classes) {
-  gbm::GBTreeModel model(param);
+gbm::GBTreeModel CreateTestModel(LearnerModelParam const* param, GenericParameter const* ctx,
+                                 size_t n_classes) {
+  gbm::GBTreeModel model(param, ctx);
 
   for (size_t i = 0; i < n_classes; ++i) {
     std::vector<std::unique_ptr<RegTree>> trees;
@@ -486,7 +537,8 @@ std::unique_ptr<GradientBooster> CreateTrainedGBM(
   for (size_t i = 0; i < kRows; ++i) {
     labels[i] = i;
   }
-  p_dmat->Info().labels_.HostVector() = labels;
+  p_dmat->Info().labels =
+      linalg::Tensor<float, 2>{labels.cbegin(), labels.cend(), {labels.size()}, -1};
   HostDeviceVector<GradientPair> gpair;
   auto& h_gpair = gpair.HostVector();
   h_gpair.resize(kRows);
@@ -602,7 +654,7 @@ class RMMAllocator {};
 void DeleteRMMResource(RMMAllocator* r) {}
 
 RMMAllocatorPtr SetUpRMMResourceForCppTests(int argc, char** argv) {
-  return RMMAllocatorPtr(nullptr, DeleteRMMResource);
+  return {nullptr, DeleteRMMResource};
 }
 #endif  // !defined(XGBOOST_USE_RMM) || XGBOOST_USE_RMM != 1
 }  // namespace xgboost
