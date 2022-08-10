@@ -32,7 +32,7 @@ TIMESTAMP := $(shell date +%s)
 SHELL:=/bin/bash
 THIS_FILE := $(lastword $(MAKEFILE_LIST))
 
-XGB_VERSION ?= 1.5.2
+XGB_VERSION ?= 1.6.1
 
 TARGET_NEXUS ?= snapshot
 NEXUS_IP ?= 172.17.0.53
