@@ -48,8 +48,8 @@ CONFIGURATIONS = [
 Map CHECK_IMAGES = [
     linux_minimal: [
         [ name: 'Check MINIMAL with CentOS 7.3', os: 'centos7.3', hasImage: true ],
-        [ name: 'Check MINIMAL with Ubuntu 14', os: 'ubuntu14', hasImage: true ],
-        [ name: 'Check MINIMAL with Ubuntu 16', os: 'ubuntu16', hasImage: true ]
+        [ name: 'Check MINIMAL with Ubuntu 16', os: 'ubuntu16', hasImage: true ],
+        [ name: 'Check MINIMAL with Ubuntu 18', os: 'ubuntu18', hasImage: true ]
     ],
     osx_minimal: [
         [name: 'Check MINIMAL with OS X', node: 'osx', os: 'osx'],
