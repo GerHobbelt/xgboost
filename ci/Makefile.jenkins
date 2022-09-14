@@ -65,12 +65,8 @@ ifeq ($(OS),darwin)
     WHL_OS_NAME := macosx_*
     SED_CMD := sed -i ''
     ifeq ($(CI),1)
-        export JAVA_HOME := $(shell /usr/libexec/java_home)
+        export JAVA_HOME := /Library/Java/JavaVirtualMachines/jdk1.8.0_111.jdk/Contents/Home
         $(info JAVA_HOME=$(JAVA_HOME))
-        export JAVA_INCLUDE_PATH := $(JAVA_HOME)/include
-        $(info JAVA_INCLUDE_PATH=$(JAVA_INCLUDE_PATH))
-        export JAVA_INCLUDE_PATH2 := $(JAVA_HOME)/include/darwin
-        $(info JAVA_INCLUDE_PATH2=$(JAVA_INCLUDE_PATH2))
         export PATH := $(PATH):/Users/jenkins/anaconda/bin
         $(info PATH=$(PATH))
     endif
