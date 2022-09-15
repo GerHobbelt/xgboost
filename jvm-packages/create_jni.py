@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.7
+#!/usr/bin/env python
 import errno
 import argparse
 import glob
@@ -71,6 +71,12 @@ def normpath(path):
 
 
 if __name__ == "__main__":
+    print("Current Python version " + str(sys.version_info[0:3]))
+    if sys.version_info < (3, 7, 0):
+        print(sys.executable)
+        import warnings
+        warnings.warn("Python 3.7+ required")
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--log-capi-invocation', type=str, choices=['ON', 'OFF'], default='OFF')
     parser.add_argument('--use-cuda', type=str, choices=['ON', 'OFF'], default='OFF')
