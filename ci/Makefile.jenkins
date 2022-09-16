@@ -69,8 +69,6 @@ ifeq ($(OS),darwin)
         $(info JAVA_HOME=$(JAVA_HOME))
         export PATH := $(PATH):/Users/jenkins/anaconda/bin
         $(info PATH=$(PATH))
-        export MACOSX_DEPLOYMENT_TARGET := 11_0
-        $(info MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET))
     endif
 endif
 
@@ -406,6 +404,7 @@ centos_whl%:
 	source $(CENTOS_PY_$*_ENV_PATH) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl
 
 osx_whl%:
+  export MACOSX_DEPLOYMENT_TARGET=11_0 \
 	source activate $(OSX_PY_$*_ENV_NAME) && $(MAKE) -f $(THIS_FILE) PY_VERSION=$* whl_impl
 
 osx_check_minimal:
