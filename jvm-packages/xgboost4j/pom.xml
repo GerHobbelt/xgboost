@@ -256,7 +256,7 @@
                       </goals>
                       <configuration>
                           <skip>${skip.create_jni}</skip>
-                          <executable>python</executable>
+                          <executable>python3</executable>
                           <arguments>
                             <argument>create_jni.py</argument>
                             <argument>--log-capi-invocation</argument>
