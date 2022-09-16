@@ -84,7 +84,7 @@ public class Booster implements Serializable {
   }
 
   private static Booster newKryoBooster(Map<String, Object> params, DMatrix[] cacheMats)
-    throws XGBoostError {
+      throws XGBoostError {
     try {
       Constructor<?> constuctor = KRYO_BOOSTER_CLASS.getDeclaredConstructors()[0];
       return (Booster) constuctor.newInstance(params, cacheMats);
@@ -95,7 +95,7 @@ public class Booster implements Serializable {
   }
 
   protected Booster(Map<String, Object> params, DMatrix[] cacheMats, boolean isKryoBooster)
-    throws XGBoostError {
+      throws XGBoostError {
     this(isKryoBooster);
     init(cacheMats);
     setParams(params);

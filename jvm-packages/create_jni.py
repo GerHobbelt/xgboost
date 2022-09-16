@@ -71,12 +71,6 @@ def normpath(path):
 
 
 if __name__ == "__main__":
-    print("Current Python version " + str(sys.version_info[0:3]))
-    if sys.version_info < (3, 7, 0):
-        print(sys.executable)
-        import warnings
-        warnings.warn("Python 3.7+ required")
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--log-capi-invocation', type=str, choices=['ON', 'OFF'], default='OFF')
     parser.add_argument('--use-cuda', type=str, choices=['ON', 'OFF'], default='OFF')
@@ -147,8 +141,8 @@ if __name__ == "__main__":
                 run("cmake --build . --config Release" + maybe_parallel_build)
 
             with cd("demo/CLI/regression"):
-                run("\"{}\" mapfeat.py".format(sys.executable))
-                run("\"{}\" mknfold.py machine.txt 1".format(sys.executable))
+                run(f'"{sys.executable}" mapfeat.py')
+                run(f'"{sys.executable}" mknfold.py machine.txt 1')
     else:
         print("found existing library '{}' in '{}'".format(library_name, library_path))
 
@@ -166,8 +160,8 @@ if __name__ == "__main__":
     print("copying train/test files")
     maybe_makedirs("{}/src/test/resources".format(xgboost4j_spark))
     with cd("../demo/CLI/regression"):
-        run("\"{}\" mapfeat.py".format(sys.executable))
-        run("\"{}\" mknfold.py machine.txt 1".format(sys.executable))
+        run(f'"{sys.executable}" mapfeat.py')
+        run(f'"{sys.executable}" mknfold.py machine.txt 1')
 
     for file in glob.glob("../demo/CLI/regression/machine.txt.t*"):
         cp(file, "{}/src/test/resources".format(xgboost4j_spark))
