@@ -69,6 +69,8 @@ ifeq ($(OS),darwin)
         $(info JAVA_HOME=$(JAVA_HOME))
         export PATH := $(PATH):/Users/jenkins/anaconda/bin
         $(info PATH=$(PATH))
+        export MACOSX_DEPLOYMENT_TARGET := 11_0
+        $(info MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET))
     endif
 endif
 
