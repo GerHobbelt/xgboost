@@ -120,6 +120,7 @@ endif
 CMAKE_OPTS := -DJVM_BINDINGS:BOOL=ON
 ifeq ($(USE_CUDA),1)
 	CMAKE_OPTS += -DUSE_CUDA:BOOL=ON
+	CMAKE_OPTS += -DBUILD_WITH_CUDA_CUB=ON
 	JAR_OPTS += USE_GPU=TRUE
 endif
 ifeq ($(USE_OMP),1)
@@ -127,6 +128,10 @@ ifeq ($(USE_OMP),1)
 	JAR_OPTS += USE_OMP=TRUE
 else
 	CMAKE_OPTS += -DUSE_OPENMP:BOOL=OFF
+endif
+
+ifneq ($(BUILD_TAG),)
+    RUNTIME_BUILD_TAG := -b$(BUILD_TAG)
 endif
 
 mrproper:
@@ -311,14 +316,14 @@ endif
 	-u `id -u`:`id -g` \
 	-w /dot \
 	$(ADDITIONAL_DOCKER_ARGS) \
-	harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):centos$* \
+	harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):centos$*$(RUNTIME_BUILD_TAG) \
 	-c "export JAVA_HOME=$(CENTOS_JAVA_HOME) && \
 		export LD_LIBRARY_PATH=$(CHECK_LD_LIB_PATH) && \
 		make -f $(THIS_FILE) check_deps_linux"
 
 ubuntu%_check_deps_in_docker_impl:
 ifeq ($(CI),1)
-	docker pull harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):ubuntu$*
+	docker pull harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):ubuntu$*$(RUNTIME_BUILD_TAG)
 endif
 	docker run \
 		$(INTERACTIVE_FLAG) \
@@ -331,7 +336,7 @@ endif
 		-u `id -u`:`id -g` \
 		-w /dot \
 		$(ADDITIONAL_DOCKER_ARGS) \
-		harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):ubuntu$* \
+		harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-$(BACKEND):ubuntu$*$(RUNTIME_BUILD_TAG) \
 		-c "export JAVA_HOME=$(UBUNTU_JAVA_HOME) && \
 			export LD_LIBRARY_PATH=$(CHECK_LD_LIB_PATH) && \
 			make -f $(THIS_FILE) check_deps_linux"

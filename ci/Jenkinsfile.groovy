@@ -24,6 +24,7 @@ ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.whl, **/ci-build/*.log, **/jv
 
 XGB_MAJOR_VERSION = '1.6.1'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
+BUILD_TAG=1
 
 def targetNexus = params.targetNexus ?: TARGET_NEXUS_NONE
 targetNexus = targetNexus.toLowerCase()
@@ -35,7 +36,7 @@ if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
     }
 }
 
-MAKE_OPTS = "CI=1 XGB_VERSION=${XGB_VERSION} TARGET_NEXUS=${targetNexus} PY_VERSION=37"
+MAKE_OPTS = "CI=1 XGB_VERSION=${XGB_VERSION} TARGET_NEXUS=${targetNexus} PY_VERSION=37 BUILD_TAG=${BUILD_TAG}"
 
 CONFIGURATIONS = [
     [backend: 'minimal', os: 'osx', node: 'osx'],
