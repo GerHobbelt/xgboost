@@ -27,6 +27,7 @@ test_that("xgb.DMatrix: saving, loading", {
   # save to a local file
   dtest1 <- xgb.DMatrix(test_data, label = test_label)
   tmp_file <- tempfile('xgb.DMatrix_')
+  on.exit(unlink(tmp_file))
   expect_true(xgb.DMatrix.save(dtest1, tmp_file))
   # read from a local file
   expect_output(dtest3 <- xgb.DMatrix(tmp_file), "entries loaded from")
@@ -41,7 +42,6 @@ test_that("xgb.DMatrix: saving, loading", {
   dtest4 <- xgb.DMatrix(tmp_file, silent = TRUE)
   expect_equal(dim(dtest4), c(3, 4))
   expect_equal(getinfo(dtest4, 'label'), c(0, 1, 0))
-  unlink(tmp_file)
 })
 
 test_that("xgb.DMatrix: getinfo & setinfo", {
@@ -64,8 +64,8 @@ test_that("xgb.DMatrix: getinfo & setinfo", {
   expect_true(setinfo(dtest, 'group', c(50, 50)))
   expect_error(setinfo(dtest, 'group', test_label))
 
-  # providing character values will give a warning
-  expect_warning(setinfo(dtest, 'weight', rep('a', nrow(test_data))))
+  # providing character values will give an error
+  expect_error(setinfo(dtest, 'weight', rep('a', nrow(test_data))))
 
   # any other label should error
   expect_error(setinfo(dtest, 'asdf', test_label))
@@ -99,7 +99,7 @@ test_that("xgb.DMatrix: colnames", {
   dtest <- xgb.DMatrix(test_data, label = test_label)
   expect_equal(colnames(dtest), colnames(test_data))
   expect_error(colnames(dtest) <- 'asdf')
-  new_names <- make.names(1:ncol(test_data))
+  new_names <- make.names(seq_len(ncol(test_data)))
   expect_silent(colnames(dtest) <- new_names)
   expect_equal(colnames(dtest), new_names)
   expect_silent(colnames(dtest) <- NULL)

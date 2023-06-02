@@ -22,8 +22,9 @@ DEFAULT_NODE_LABEL = 'docker && !mr-0xc8'
 PUBLISHABLE_BRANCH_NAME = 'h2o3'
 ARCHIVED_FILES = '**/ci-build/*.jar, **/ci-build/*.whl, **/ci-build/*.log, **/jvm-packages/xgboost4j/*.jar, **/jvm-packages/xgboost4j/*.log'
 
-XGB_MAJOR_VERSION = '1.2.0'
+XGB_MAJOR_VERSION = '1.6.1'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
+BUILD_TAG=1
 
 def targetNexus = params.targetNexus ?: TARGET_NEXUS_NONE
 targetNexus = targetNexus.toLowerCase()
@@ -35,7 +36,7 @@ if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
     }
 }
 
-MAKE_OPTS = "CI=1 XGB_VERSION=${XGB_VERSION} TARGET_NEXUS=${targetNexus} PY_VERSION=35"
+MAKE_OPTS = "CI=1 XGB_VERSION=${XGB_VERSION} TARGET_NEXUS=${targetNexus} PY_VERSION=37 BUILD_TAG=${BUILD_TAG}"
 
 CONFIGURATIONS = [
     [backend: 'minimal', os: 'osx', node: 'osx'],
@@ -48,8 +49,8 @@ CONFIGURATIONS = [
 Map CHECK_IMAGES = [
     linux_minimal: [
         [ name: 'Check MINIMAL with CentOS 7.3', os: 'centos7.3', hasImage: true ],
-        [ name: 'Check MINIMAL with Ubuntu 14', os: 'ubuntu14', hasImage: true ],
-        [ name: 'Check MINIMAL with Ubuntu 16', os: 'ubuntu16', hasImage: true ]
+        [ name: 'Check MINIMAL with Ubuntu 16', os: 'ubuntu16', hasImage: true ],
+        [ name: 'Check MINIMAL with Ubuntu 18', os: 'ubuntu18', hasImage: true ]
     ],
     osx_minimal: [
         [name: 'Check MINIMAL with OS X', node: 'osx', os: 'osx'],

@@ -40,7 +40,7 @@ print("Train xgboost with verbose 2, also print information about tree")
 bst <- xgboost(data = dtrain, max_depth = 2, eta = 1, nrounds = 2,
                nthread = 2, objective = "binary:logistic", verbose = 2)
 
-# you can also specify data as file path to a LibSVM format input
+# you can also specify data as file path to a LIBSVM format input
 # since we do not have this file with us, the following line is just for illustration
 # bst <- xgboost(data = 'agaricus.train.svm', max_depth = 2, eta = 1, nrounds = 2,objective = "binary:logistic")
 
@@ -63,7 +63,7 @@ print(paste("sum(abs(pred2-pred))=", sum(abs(pred2 - pred))))
 # save model to R's raw vector
 raw <- xgb.save.raw(bst)
 # load binary model to R
-bst3 <- xgb.load(raw)
+bst3 <- xgb.load.raw(raw)
 pred3 <- predict(bst3, test$data)
 # pred3 should be identical to pred
 print(paste("sum(abs(pred3-pred))=", sum(abs(pred3 - pred))))

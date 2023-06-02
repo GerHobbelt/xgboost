@@ -1,5 +1,6 @@
-ARG CUDA_VERSION
-FROM nvidia/cuda:$CUDA_VERSION-runtime-ubuntu16.04
+ARG CUDA_VERSION_ARG
+FROM nvidia/cuda:$CUDA_VERSION_ARG-runtime-ubuntu16.04
+ARG CUDA_VERSION_ARG
 ARG JDK_VERSION=8
 ARG SPARK_VERSION=3.0.0
 
@@ -8,6 +9,7 @@ ENV DEBIAN_FRONTEND noninteractive
 
 # Install all basic requirements
 RUN \
+    apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1604/x86_64/3bf863cc.pub && \
     apt-get update && \
     apt-get install -y software-properties-common && \
     add-apt-repository ppa:openjdk-r/ppa && \

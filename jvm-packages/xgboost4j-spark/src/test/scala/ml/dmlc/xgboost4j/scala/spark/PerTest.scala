@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ package ml.dmlc.xgboost4j.scala.spark
 import java.io.File
 
 import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
-import org.apache.spark.{SparkConf, SparkContext, TaskFailedListener}
+import org.apache.spark.SparkContext
 import org.apache.spark.sql._
 import org.scalatest.{BeforeAndAfterEach, FunSuite}
 
@@ -40,18 +40,16 @@ trait PerTest extends BeforeAndAfterEach { self: FunSuite =>
       .appName("XGBoostSuite")
       .config("spark.ui.enabled", false)
       .config("spark.driver.memory", "512m")
+      .config("spark.barrier.sync.timeout", 10)
       .config("spark.task.cpus", 1)
 
   override def beforeEach(): Unit = getOrCreateSession
 
   override def afterEach() {
-    synchronized {
-      if (currentSession != null) {
-        currentSession.stop()
-        cleanExternalCache(currentSession.sparkContext.appName)
-        currentSession = null
-      }
-      TaskFailedListener.killerStarted = false
+    if (currentSession != null) {
+      currentSession.stop()
+      cleanExternalCache(currentSession.sparkContext.appName)
+      currentSession = null
     }
   }
 

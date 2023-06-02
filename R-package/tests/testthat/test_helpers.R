@@ -1,3 +1,4 @@
+library(testthat)
 context('Test helper functions')
 
 require(xgboost)
@@ -110,7 +111,7 @@ test_that("predict feature contributions works", {
   pred <- predict(bst.GLM, sparse_matrix, outputmargin = TRUE)
   expect_lt(max(abs(rowSums(pred_contr) - pred)), 1e-5)
   # manual calculation of linear terms
-  coefs <- xgb.dump(bst.GLM)[-c(1, 2, 4)] %>% as.numeric
+  coefs <- as.numeric(xgb.dump(bst.GLM)[-c(1, 2, 4)])
   coefs <- c(coefs[-1], coefs[1]) # intercept must be the last
   pred_contr_manual <- sweep(cbind(sparse_matrix, 1), 2, coefs, FUN = "*")
   expect_equal(as.numeric(pred_contr), as.numeric(pred_contr_manual),
@@ -130,7 +131,11 @@ test_that("predict feature contributions works", {
   pred <- predict(mbst.GLM, as.matrix(iris[, -5]), outputmargin = TRUE, reshape = TRUE)
   pred_contr <- predict(mbst.GLM, as.matrix(iris[, -5]), predcontrib = TRUE)
   expect_length(pred_contr, 3)
-  coefs_all <- xgb.dump(mbst.GLM)[-c(1, 2, 6)] %>% as.numeric %>% matrix(ncol = 3, byrow = TRUE)
+  coefs_all <- matrix(
+    data = as.numeric(xgb.dump(mbst.GLM)[-c(1, 2, 6)]),
+    ncol = 3,
+    byrow = TRUE
+  )
   for (g in seq_along(pred_contr)) {
     expect_equal(colnames(pred_contr[[g]]), c(colnames(iris[, -5]), "BIAS"))
     expect_lt(max(abs(rowSums(pred_contr[[g]]) - pred[, g])), float_tolerance)
@@ -174,7 +179,7 @@ test_that("SHAPs sum to predictions, with or without DART", {
 
     expect_equal(rowSums(shap), pred, tol = tol)
     expect_equal(apply(shapi, 1, sum), pred, tol = tol)
-    for (i in 1 : nrow(d))
+    for (i in seq_len(nrow(d)))
       for (f in list(rowSums, colSums))
         expect_equal(f(shapi[i, , ]), shap[i, ], tol = tol)
   }
@@ -223,7 +228,7 @@ if (grepl('Windows', Sys.info()[['sysname']]) ||
       X <- 10^runif(100, -20, 20)
       if (capabilities('long.double')) {
           X2X <- as.numeric(format(X, digits = 17))
-          expect_identical(X, X2X)
+          expect_equal(X, X2X, tolerance = float_tolerance)
       }
       # retrieved attributes to be the same as written
       for (x in X) {
@@ -238,12 +243,13 @@ if (grepl('Windows', Sys.info()[['sysname']]) ||
 test_that("xgb.Booster serializing as R object works", {
   saveRDS(bst.Tree, 'xgb.model.rds')
   bst <- readRDS('xgb.model.rds')
-  if (file.exists('xgb.model.rds')) file.remove('xgb.model.rds')
   dtrain <- xgb.DMatrix(sparse_matrix, label = label)
   expect_equal(predict(bst.Tree, dtrain), predict(bst, dtrain), tolerance = float_tolerance)
   expect_equal(xgb.dump(bst.Tree), xgb.dump(bst))
   xgb.save(bst, 'xgb.model')
   if (file.exists('xgb.model')) file.remove('xgb.model')
+  bst <- readRDS('xgb.model.rds')
+  if (file.exists('xgb.model.rds')) file.remove('xgb.model.rds')
   nil_ptr <- new("externalptr")
   class(nil_ptr) <- "xgb.Booster.handle"
   expect_true(identical(bst$handle, nil_ptr))
@@ -305,7 +311,45 @@ test_that("xgb.importance works with and without feature names", {
   # for multiclass
   imp.Tree <- xgb.importance(model = mbst.Tree)
   expect_equal(dim(imp.Tree), c(4, 4))
-  xgb.importance(model = mbst.Tree, trees = seq(from = 0, by = nclass, length.out = nrounds))
+
+  trees <- seq(from = 0, by = 2, length.out = 2)
+  importance <- xgb.importance(feature_names = feature.names, model = bst.Tree, trees = trees)
+
+  importance_from_dump <- function() {
+    model_text_dump <- xgb.dump(model = bst.Tree, with_stats = TRUE, trees = trees)
+    imp <- xgb.model.dt.tree(
+      feature_names = feature.names,
+      text = model_text_dump,
+      trees = trees
+    )[
+      Feature != "Leaf", .(
+        Gain = sum(Quality),
+        Cover = sum(Cover),
+        Frequency = .N
+      ),
+      by = Feature
+    ][
+      , `:=`(
+        Gain = Gain / sum(Gain),
+        Cover = Cover / sum(Cover),
+        Frequency = Frequency / sum(Frequency)
+      )
+    ][
+      order(Gain, decreasing = TRUE)
+    ]
+    imp
+  }
+  expect_equal(importance_from_dump(), importance, tolerance = 1e-6)
+
+  ## decision stump
+  m <- xgboost::xgboost(
+    data = as.matrix(data.frame(x = c(0, 1))),
+    label = c(1, 2),
+    nrounds = 1
+  )
+  df <- xgb.model.dt.tree(model = m)
+  expect_equal(df$Feature, "Leaf")
+  expect_equal(df$Cover, 2)
 })
 
 test_that("xgb.importance works with GLM model", {
@@ -335,8 +379,8 @@ test_that("xgb.model.dt.tree and xgb.importance work with a single split model",
 })
 
 test_that("xgb.plot.tree works with and without feature names", {
-  xgb.plot.tree(feature_names = feature.names, model = bst.Tree)
-  xgb.plot.tree(model = bst.Tree)
+  expect_silent(xgb.plot.tree(feature_names = feature.names, model = bst.Tree))
+  expect_silent(xgb.plot.tree(model = bst.Tree))
 })
 
 test_that("xgb.plot.multi.trees works with and without feature names", {
@@ -351,11 +395,47 @@ test_that("xgb.plot.deepness works", {
   xgb.ggplot.deepness(model = bst.Tree)
 })
 
+test_that("xgb.shap.data works when top_n is provided", {
+  data_list <- xgb.shap.data(data = sparse_matrix, model = bst.Tree, top_n = 2)
+  expect_equal(names(data_list), c("data", "shap_contrib"))
+  expect_equal(NCOL(data_list$data), 2)
+  expect_equal(NCOL(data_list$shap_contrib), 2)
+  expect_equal(NROW(data_list$data), NROW(data_list$shap_contrib))
+  expect_gt(length(colnames(data_list$data)), 0)
+  expect_gt(length(colnames(data_list$shap_contrib)), 0)
+
+  # for multiclass without target class provided
+  data_list <- xgb.shap.data(data = as.matrix(iris[, -5]), model = mbst.Tree, top_n = 2)
+  expect_equal(dim(data_list$shap_contrib), c(nrow(iris), 2))
+  # for multiclass with target class provided
+  data_list <- xgb.shap.data(data = as.matrix(iris[, -5]), model = mbst.Tree, top_n = 2, target_class = 0)
+  expect_equal(dim(data_list$shap_contrib), c(nrow(iris), 2))
+})
+
+test_that("xgb.shap.data works with subsampling", {
+  data_list <- xgb.shap.data(data = sparse_matrix, model = bst.Tree, top_n = 2, subsample = 0.8)
+  expect_equal(NROW(data_list$data), as.integer(0.8 * nrow(sparse_matrix)))
+  expect_equal(NROW(data_list$data), NROW(data_list$shap_contrib))
+})
+
+test_that("prepare.ggplot.shap.data works", {
+  data_list <- xgb.shap.data(data = sparse_matrix, model = bst.Tree, top_n = 2)
+  plot_data <- prepare.ggplot.shap.data(data_list, normalize = TRUE)
+  expect_s3_class(plot_data, "data.frame")
+  expect_equal(names(plot_data), c("id", "feature", "feature_value", "shap_value"))
+  expect_s3_class(plot_data$feature, "factor")
+  # Each observation should have 1 row for each feature
+  expect_equal(nrow(plot_data), nrow(sparse_matrix) * 2)
+})
+
 test_that("xgb.plot.shap works", {
   sh <- xgb.plot.shap(data = sparse_matrix, model = bst.Tree, top_n = 2, col = 4)
   expect_equal(names(sh), c("data", "shap_contrib"))
-  expect_equal(NCOL(sh$data), 2)
-  expect_equal(NCOL(sh$shap_contrib), 2)
+})
+
+test_that("xgb.plot.shap.summary works", {
+  expect_silent(xgb.plot.shap.summary(data = sparse_matrix, model = bst.Tree, top_n = 2))
+  expect_silent(xgb.ggplot.shap.summary(data = sparse_matrix, model = bst.Tree, top_n = 2))
 })
 
 test_that("check.deprecation works", {
@@ -373,4 +453,27 @@ test_that("check.deprecation works", {
     res <- ttt(a = 1, dumm = 22, z = 3)
   , "\'dumm\' was partially matched to \'dummy\'")
   expect_equal(res, list(a = 1, DUMMY = 22))
+})
+
+test_that('convert.labels works', {
+  y <- c(0, 1, 0, 0, 1)
+  for (objective in c('binary:logistic', 'binary:logitraw', 'binary:hinge')) {
+    res <- xgboost:::convert.labels(y, objective_name = objective)
+    expect_s3_class(res, 'factor')
+    expect_equal(res, factor(res))
+  }
+  y <- c(0, 1, 3, 2, 1, 4)
+  for (objective in c('multi:softmax', 'multi:softprob', 'rank:pairwise', 'rank:ndcg',
+                      'rank:map')) {
+    res <- xgboost:::convert.labels(y, objective_name = objective)
+    expect_s3_class(res, 'factor')
+    expect_equal(res, factor(res))
+  }
+  y <- c(1.2, 3.0, -1.0, 10.0)
+  for (objective in c('reg:squarederror', 'reg:squaredlogerror', 'reg:logistic',
+                      'reg:pseudohubererror', 'count:poisson', 'survival:cox', 'survival:aft',
+                      'reg:gamma', 'reg:tweedie')) {
+    res <- xgboost:::convert.labels(y, objective_name = objective)
+    expect_equal(class(res), 'numeric')
+  }
 })

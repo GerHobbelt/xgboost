@@ -1,3 +1,6 @@
+/*!
+ * Copyright 2019-2022 by XGBoost Contributors
+ */
 #include <dmlc/filesystem.h>
 #include <gtest/gtest.h>
 
@@ -24,10 +27,8 @@ namespace common {
 
 template <typename AdapterT>
 HistogramCuts GetHostCuts(AdapterT *adapter, int num_bins, float missing) {
-  HistogramCuts cuts;
-  DenseCuts builder(&cuts);
   data::SimpleDMatrix dmat(adapter, missing, 1);
-  builder.Build(&dmat, num_bins);
+  HistogramCuts cuts = SketchOnDMatrix(&dmat, num_bins, common::OmpGetNumThreads(0));
   return cuts;
 }
 
@@ -39,9 +40,7 @@ TEST(HistUtil, DeviceSketch) {
   auto dmat = GetDMatrixFromData(x, num_rows, num_columns);
 
   auto device_cuts = DeviceSketch(0, dmat.get(), num_bins);
-  HistogramCuts host_cuts;
-  DenseCuts builder(&host_cuts);
-  builder.Build(dmat.get(), num_bins);
+  HistogramCuts host_cuts = SketchOnDMatrix(dmat.get(), num_bins, common::OmpGetNumThreads(0));
 
   EXPECT_EQ(device_cuts.Values(), host_cuts.Values());
   EXPECT_EQ(device_cuts.Ptrs(), host_cuts.Ptrs());
@@ -49,6 +48,10 @@ TEST(HistUtil, DeviceSketch) {
 }
 
 TEST(HistUtil, SketchBatchNumElements) {
+#if defined(XGBOOST_USE_RMM) && XGBOOST_USE_RMM == 1
+  LOG(WARNING) << "Test not runnable with RMM enabled.";
+  return;
+#endif  // defined(XGBOOST_USE_RMM) && XGBOOST_USE_RMM == 1
   size_t constexpr kCols = 10000;
   int device;
   dh::safe_cuda(cudaGetDevice(&device));
@@ -112,7 +115,7 @@ TEST(HistUtil, DeviceSketchDeterminism) {
   }
 }
 
-TEST(HistUtil, DeviceSketchCategorical) {
+TEST(HistUtil, DeviceSketchCategoricalAsNumeric) {
   int categorical_sizes[] = {2, 6, 8, 12};
   int num_bins = 256;
   int sizes[] = {25, 100, 1000};
@@ -124,6 +127,43 @@ TEST(HistUtil, DeviceSketchCategorical) {
       ValidateCuts(cuts, dmat.get(), num_bins);
     }
   }
+}
+
+TEST(HistUtil, DeviceSketchCategoricalFeatures) {
+  TestCategoricalSketch(1000, 256, 32, false,
+                        [](DMatrix *p_fmat, int32_t num_bins) {
+                          return DeviceSketch(0, p_fmat, num_bins);
+                        });
+  TestCategoricalSketch(1000, 256, 32, true,
+                        [](DMatrix *p_fmat, int32_t num_bins) {
+                          return DeviceSketch(0, p_fmat, num_bins);
+                        });
+}
+
+void TestMixedSketch() {
+  size_t n_samples = 1000, n_features = 2, n_categories = 3;
+  std::vector<float> data(n_samples * n_features);
+  SimpleLCG gen;
+  SimpleRealUniformDistribution<float> cat_d{0.0f, float(n_categories)};
+  SimpleRealUniformDistribution<float> num_d{0.0f, 3.0f};
+  for (size_t i = 0; i < n_samples * n_features; ++i) {
+    if (i % 2 == 0) {
+      data[i] = std::floor(cat_d(&gen));
+    } else {
+      data[i] = num_d(&gen);
+    }
+  }
+
+  auto m = GetDMatrixFromData(data, n_samples, n_features);
+  m->Info().feature_types.HostVector().push_back(FeatureType::kCategorical);
+  m->Info().feature_types.HostVector().push_back(FeatureType::kNumerical);
+
+  auto cuts = DeviceSketch(0, m.get(), 64);
+  ASSERT_EQ(cuts.Values().size(), 64 + n_categories);
+}
+
+TEST(HistUtil, DeviceSketchMixedFeatures) {
+  TestMixedSketch();
 }
 
 TEST(HistUtil, DeviceSketchMultipleColumns) {
@@ -241,7 +281,8 @@ TEST(HistUtil, DeviceSketchExternalMemoryWithWeights) {
 template <typename Adapter>
 auto MakeUnweightedCutsForTest(Adapter adapter, int32_t num_bins, float missing, size_t batch_size = 0) {
   common::HistogramCuts batched_cuts;
-  SketchContainer sketch_container(num_bins, adapter.NumColumns(), adapter.NumRows(), 0);
+  HostDeviceVector<FeatureType> ft;
+  SketchContainer sketch_container(ft, num_bins, adapter.NumColumns(), adapter.NumRows(), 0);
   MetaInfo info;
   AdapterDeviceSketch(adapter.Value(), num_bins, info, std::numeric_limits<float>::quiet_NaN(),
                       &sketch_container);
@@ -290,10 +331,9 @@ TEST(HistUtil, AdapterDeviceSketchMemory) {
   ConsoleLogger::Configure({{"verbosity", "3"}});
   auto cuts = MakeUnweightedCutsForTest(adapter, num_bins, std::numeric_limits<float>::quiet_NaN());
   ConsoleLogger::Configure({{"verbosity", "0"}});
-  size_t bytes_constant = 1000;
   size_t bytes_required = detail::RequiredMemory(
       num_rows, num_columns, num_rows * num_columns, num_bins, false);
-  EXPECT_LE(dh::GlobalMemoryLogger().PeakMemory(), bytes_required + bytes_constant);
+  EXPECT_LE(dh::GlobalMemoryLogger().PeakMemory(), bytes_required * 1.05);
   EXPECT_GE(dh::GlobalMemoryLogger().PeakMemory(), bytes_required * 0.95);
 }
 
@@ -309,7 +349,8 @@ TEST(HistUtil, AdapterSketchSlidingWindowMemory) {
   dh::GlobalMemoryLogger().Clear();
   ConsoleLogger::Configure({{"verbosity", "3"}});
   common::HistogramCuts batched_cuts;
-  SketchContainer sketch_container(num_bins, num_columns, num_rows, 0);
+  HostDeviceVector<FeatureType> ft;
+  SketchContainer sketch_container(ft, num_bins, num_columns, num_rows, 0);
   AdapterDeviceSketch(adapter.Value(), num_bins, info, std::numeric_limits<float>::quiet_NaN(),
                       &sketch_container);
   HistogramCuts cuts;
@@ -336,10 +377,12 @@ TEST(HistUtil, AdapterSketchSlidingWindowWeightedMemory) {
   dh::GlobalMemoryLogger().Clear();
   ConsoleLogger::Configure({{"verbosity", "3"}});
   common::HistogramCuts batched_cuts;
-  SketchContainer sketch_container(num_bins, num_columns, num_rows, 0);
+  HostDeviceVector<FeatureType> ft;
+  SketchContainer sketch_container(ft, num_bins, num_columns, num_rows, 0);
   AdapterDeviceSketch(adapter.Value(), num_bins, info,
                       std::numeric_limits<float>::quiet_NaN(),
                       &sketch_container);
+
   HistogramCuts cuts;
   sketch_container.MakeCuts(&cuts);
   ConsoleLogger::Configure({{"verbosity", "0"}});
@@ -347,6 +390,52 @@ TEST(HistUtil, AdapterSketchSlidingWindowWeightedMemory) {
       num_rows, num_columns, num_rows * num_columns, num_bins, true);
   EXPECT_LE(dh::GlobalMemoryLogger().PeakMemory(), bytes_required * 1.05);
   EXPECT_GE(dh::GlobalMemoryLogger().PeakMemory(), bytes_required);
+}
+
+void TestCategoricalSketchAdapter(size_t n, size_t num_categories,
+                                  int32_t num_bins, bool weighted) {
+  auto h_x = GenerateRandomCategoricalSingleColumn(n, num_categories);
+  thrust::device_vector<float> x(h_x);
+  auto adapter = AdapterFromData(x, n, 1);
+  MetaInfo info;
+  info.num_row_ = n;
+  info.num_col_ = 1;
+  info.feature_types.HostVector().push_back(FeatureType::kCategorical);
+
+  if (weighted) {
+    std::vector<float> weights(n, 0);
+    SimpleLCG lcg;
+    SimpleRealUniformDistribution<float> dist(0, 1);
+    for (auto& v : weights) {
+      v = dist(&lcg);
+    }
+    info.weights_.HostVector() = weights;
+  }
+
+  ASSERT_EQ(info.feature_types.Size(), 1);
+  SketchContainer container(info.feature_types, num_bins, 1, n, 0);
+  AdapterDeviceSketch(adapter.Value(), num_bins, info,
+                      std::numeric_limits<float>::quiet_NaN(), &container);
+  HistogramCuts cuts;
+  container.MakeCuts(&cuts);
+
+  thrust::sort(x.begin(), x.end());
+  auto n_uniques = thrust::unique(x.begin(), x.end()) - x.begin();
+  ASSERT_NE(n_uniques, x.size());
+  ASSERT_EQ(cuts.TotalBins(), n_uniques);
+  ASSERT_EQ(n_uniques, num_categories);
+
+  auto& values = cuts.cut_values_.HostVector();
+  ASSERT_TRUE(std::is_sorted(values.cbegin(), values.cend()));
+  auto is_unique = (std::unique(values.begin(), values.end()) - values.begin()) == n_uniques;
+  ASSERT_TRUE(is_unique);
+
+  x.resize(n_uniques);
+  h_x.resize(n_uniques);
+  thrust::copy(x.begin(), x.end(), h_x.begin());
+  for (decltype(n_uniques) i = 0; i < n_uniques; ++i) {
+    ASSERT_EQ(h_x[i], values[i]);
+  }
 }
 
 TEST(HistUtil, AdapterDeviceSketchCategorical) {
@@ -361,6 +450,8 @@ TEST(HistUtil, AdapterDeviceSketchCategorical) {
       auto adapter = AdapterFromData(x_device, n, 1);
       ValidateBatchedCuts(adapter, num_bins, adapter.NumColumns(),
                           adapter.NumRows(), dmat.get());
+      TestCategoricalSketchAdapter(n, num_categories, num_bins, true);
+      TestCategoricalSketchAdapter(n, num_categories, num_bins, false);
     }
   }
 }
@@ -429,7 +520,7 @@ TEST(HistUtil, DeviceSketchFromGroupWeights) {
   for (size_t i = 0; i < kGroups; ++i) {
     groups[i] = kRows / kGroups;
   }
-  m->Info().SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
+  m->SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
   HistogramCuts weighted_cuts = DeviceSketch(0, m.get(), kBins, 0);
 
   h_weights.clear();
@@ -459,8 +550,13 @@ void TestAdapterSketchFromWeights(bool with_group) {
       RandomDataGenerator{kRows, kCols, 0}.Device(0).GenerateArrayInterface(
           &storage);
   MetaInfo info;
+  Context ctx;
   auto& h_weights = info.weights_.HostVector();
-  h_weights.resize(kRows);
+  if (with_group) {
+    h_weights.resize(kGroups);
+  } else {
+    h_weights.resize(kRows);
+  }
   std::fill(h_weights.begin(), h_weights.end(), 1.0f);
 
   std::vector<bst_group_t> groups(kGroups);
@@ -468,7 +564,7 @@ void TestAdapterSketchFromWeights(bool with_group) {
     for (size_t i = 0; i < kGroups; ++i) {
       groups[i] = kRows / kGroups;
     }
-    info.SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
+    info.SetInfo(ctx, "group", groups.data(), DataType::kUInt32, kGroups);
   }
 
   info.weights_.SetDevice(0);
@@ -477,18 +573,20 @@ void TestAdapterSketchFromWeights(bool with_group) {
 
   data::CupyAdapter adapter(m);
   auto const& batch = adapter.Value();
-  SketchContainer sketch_container(kBins, kCols, kRows, 0);
+  HostDeviceVector<FeatureType> ft;
+  SketchContainer sketch_container(ft, kBins, kCols, kRows, 0);
   AdapterDeviceSketch(adapter.Value(), kBins, info, std::numeric_limits<float>::quiet_NaN(),
                       &sketch_container);
+
   common::HistogramCuts cuts;
   sketch_container.MakeCuts(&cuts);
 
   auto dmat = GetDMatrixFromData(storage.HostVector(), kRows, kCols);
   if (with_group) {
-    dmat->Info().SetInfo("group", groups.data(), DataType::kUInt32, kGroups);
+    dmat->Info().SetInfo(ctx, "group", groups.data(), DataType::kUInt32, kGroups);
   }
 
-  dmat->Info().SetInfo("weight", h_weights.data(), DataType::kFloat32, h_weights.size());
+  dmat->Info().SetInfo(ctx, "weight", h_weights.data(), DataType::kFloat32, h_weights.size());
   dmat->Info().num_col_ = kCols;
   dmat->Info().num_row_ = kRows;
   ASSERT_EQ(cuts.Ptrs().size(), kCols + 1);

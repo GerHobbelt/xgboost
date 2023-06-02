@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -21,14 +21,6 @@ import ml.dmlc.xgboost4j.scala.spark.TrackerConf
 
 import org.apache.spark.ml.param._
 import scala.collection.mutable
-
-import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
-
-import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector}
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{Column, DataFrame, Row}
-import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.types.{FloatType, IntegerType}
 
 private[spark] trait GeneralParams extends Params {
 
@@ -253,6 +245,27 @@ trait HasNumClass extends Params {
 
   /** @group getParam */
   final def getNumClass: Int = $(numClass)
+}
+
+/**
+ * Trait for shared param featuresCols.
+ */
+trait HasFeaturesCols extends Params {
+  /**
+   * Param for the names of feature columns.
+   * @group param
+   */
+  final val featuresCols: StringArrayParam = new StringArrayParam(this, "featuresCols",
+    "an array of feature column names.")
+
+  /** @group getParam */
+  final def getFeaturesCols: Array[String] = $(featuresCols)
+
+  /** Check if featuresCols is valid */
+  def isFeaturesColsValid: Boolean = {
+    isDefined(featuresCols) && $(featuresCols) != Array.empty
+  }
+
 }
 
 private[spark] trait ParamMapFuncs extends Params {

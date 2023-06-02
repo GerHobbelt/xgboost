@@ -11,6 +11,7 @@
 
 #include "xgboost/data.h"
 #include "xgboost/host_device_vector.h"
+#include "xgboost/tree_model.h"
 #include "device_helpers.cuh"
 
 namespace xgboost {
@@ -91,7 +92,9 @@ class HostDeviceVectorImpl {
     } else {
       gpu_access_ = GPUAccess::kWrite;
       SetDevice();
-      thrust::fill(data_d_->begin(), data_d_->end(), v);
+      auto s_data = dh::ToSpan(*data_d_);
+      dh::LaunchN(data_d_->size(),
+                  [=] XGBOOST_DEVICE(size_t i) { s_data[i] = v; });
     }
   }
 
@@ -395,6 +398,7 @@ void HostDeviceVector<T>::Resize(size_t new_size, T v) {
 
 // explicit instantiations are required, as HostDeviceVector isn't header-only
 template class HostDeviceVector<bst_float>;
+template class HostDeviceVector<double>;
 template class HostDeviceVector<GradientPair>;
 template class HostDeviceVector<int32_t>;   // bst_node_t
 template class HostDeviceVector<uint8_t>;
@@ -402,6 +406,9 @@ template class HostDeviceVector<FeatureType>;
 template class HostDeviceVector<Entry>;
 template class HostDeviceVector<uint64_t>;  // bst_row_t
 template class HostDeviceVector<uint32_t>;  // bst_feature_t
+template class HostDeviceVector<RegTree::Node>;
+template class HostDeviceVector<RegTree::Segment>;
+template class HostDeviceVector<RTreeNodeStat>;
 
 #if defined(__APPLE__)
 /*

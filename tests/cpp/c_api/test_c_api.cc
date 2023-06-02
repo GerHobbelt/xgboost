@@ -1,5 +1,5 @@
 /*!
- * Copyright 2019-2020 XGBoost contributors
+ * Copyright 2019-2022 XGBoost contributors
  */
 #include <gtest/gtest.h>
 #include <xgboost/version_config.h>
@@ -9,6 +9,8 @@
 
 #include "../helpers.h"
 #include "../../../src/common/io.h"
+
+#include "../../../src/c_api/c_api_error.h"
 
 TEST(CAPI, XGDMatrixCreateFromMatDT) {
   std::vector<int> col0 = {0, -1, 3};
@@ -23,24 +25,25 @@ TEST(CAPI, XGDMatrixCreateFromMatDT) {
   std::shared_ptr<xgboost::DMatrix> *dmat =
       static_cast<std::shared_ptr<xgboost::DMatrix> *>(handle);
   xgboost::MetaInfo &info = (*dmat)->Info();
-  ASSERT_EQ(info.num_col_, 2);
-  ASSERT_EQ(info.num_row_, 3);
-  ASSERT_EQ(info.num_nonzero_, 6);
+  ASSERT_EQ(info.num_col_, 2ul);
+  ASSERT_EQ(info.num_row_, 3ul);
+  ASSERT_EQ(info.num_nonzero_, 6ul);
 
   for (const auto &batch : (*dmat)->GetBatches<xgboost::SparsePage>()) {
-    ASSERT_EQ(batch[0][0].fvalue, 0.0f);
-    ASSERT_EQ(batch[0][1].fvalue, -4.0f);
-    ASSERT_EQ(batch[2][0].fvalue, 3.0f);
-    ASSERT_EQ(batch[2][1].fvalue, 0.0f);
+    auto page = batch.GetView();
+    ASSERT_EQ(page[0][0].fvalue, 0.0f);
+    ASSERT_EQ(page[0][1].fvalue, -4.0f);
+    ASSERT_EQ(page[2][0].fvalue, 3.0f);
+    ASSERT_EQ(page[2][1].fvalue, 0.0f);
   }
 
   delete dmat;
 }
 
 TEST(CAPI, XGDMatrixCreateFromMatOmp) {
-  std::vector<int> num_rows = {100, 11374, 15000};
+  std::vector<bst_ulong> num_rows = {100, 11374, 15000};
   for (auto row : num_rows) {
-    int num_cols = 50;
+    bst_ulong num_cols = 50;
     int num_missing = 5;
     DMatrixHandle handle;
     std::vector<float> data(num_cols * row, 1.5);
@@ -60,8 +63,9 @@ TEST(CAPI, XGDMatrixCreateFromMatOmp) {
     ASSERT_EQ(info.num_nonzero_, num_cols * row - num_missing);
 
     for (const auto &batch : (*dmat)->GetBatches<xgboost::SparsePage>()) {
+      auto page = batch.GetView();
       for (size_t i = 0; i < batch.Size(); i++) {
-        auto inst = batch[i];
+        auto inst = page[i];
         for (auto e : inst) {
           ASSERT_EQ(e.fvalue, 1.5);
         }
@@ -87,7 +91,8 @@ TEST(CAPI, ConfigIO) {
   for (size_t i = 0; i < labels.size(); ++i) {
     labels[i] = i;
   }
-  p_dmat->Info().labels_.HostVector() = labels;
+  p_dmat->Info().labels.Data()->HostVector() = labels;
+  p_dmat->Info().labels.Reshape(kRows);
 
   std::shared_ptr<Learner> learner { Learner::Create(mat) };
 
@@ -121,7 +126,8 @@ TEST(CAPI, JsonModelIO) {
   for (size_t i = 0; i < labels.size(); ++i) {
     labels[i] = i;
   }
-  p_dmat->Info().labels_.HostVector() = labels;
+  p_dmat->Info().labels.Data()->HostVector() = labels;
+  p_dmat->Info().labels.Reshape(kRows);
 
   std::shared_ptr<Learner> learner { Learner::Create(mat) };
 
@@ -144,6 +150,33 @@ TEST(CAPI, JsonModelIO) {
 
   ASSERT_EQ(model_str_0.front(), '{');
   ASSERT_EQ(model_str_0, model_str_1);
+
+  /**
+   * In memory
+   */
+  bst_ulong len{0};
+  char const *data;
+  XGBoosterSaveModelToBuffer(handle, R"({"format": "ubj"})", &len, &data);
+  ASSERT_GT(len, 3);
+
+  XGBoosterLoadModelFromBuffer(handle, data, len);
+  char const *saved;
+  bst_ulong saved_len{0};
+  XGBoosterSaveModelToBuffer(handle, R"({"format": "ubj"})", &saved_len, &saved);
+  ASSERT_EQ(len, saved_len);
+  auto l = StringView{data, len};
+  auto r = StringView{saved, saved_len};
+  ASSERT_EQ(l.size(), r.size());
+  ASSERT_EQ(l, r);
+
+  std::string buffer;
+  Json::Dump(Json::Load(l, std::ios::binary), &buffer);
+  ASSERT_EQ(model_str_0.size() - 1, buffer.size());
+  ASSERT_EQ(model_str_0.back(), '\0');
+  ASSERT_TRUE(std::equal(model_str_0.begin(), model_str_0.end() - 1, buffer.begin()));
+
+  ASSERT_EQ(XGBoosterSaveModelToBuffer(handle, R"({})", &len, &data), -1);
+  ASSERT_EQ(XGBoosterSaveModelToBuffer(handle, R"({"format": "foo"})", &len, &data), -1);
 }
 
 TEST(CAPI, CatchDMLCError) {
@@ -195,5 +228,92 @@ TEST(CAPI, DMatrixSetFeatureName) {
   }
 
   XGDMatrixFree(handle);
+}
+
+int TestExceptionCatching() {
+  API_BEGIN();
+  throw std::bad_alloc();
+  API_END();
+}
+
+TEST(CAPI, Exception) {
+  ASSERT_NO_THROW({TestExceptionCatching();});
+  ASSERT_EQ(TestExceptionCatching(), -1);
+  auto error = XGBGetLastError();
+  // Not null
+  ASSERT_TRUE(error);
+}
+
+TEST(CAPI, XGBGlobalConfig) {
+  int ret;
+  {
+    const char *config_str = R"json(
+    {
+      "verbosity": 0,
+      "use_rmm": false
+    }
+  )json";
+    ret = XGBSetGlobalConfig(config_str);
+    ASSERT_EQ(ret, 0);
+    const char *updated_config_cstr;
+    ret = XGBGetGlobalConfig(&updated_config_cstr);
+    ASSERT_EQ(ret, 0);
+
+    std::string updated_config_str{updated_config_cstr};
+    auto updated_config =
+        Json::Load({updated_config_str.data(), updated_config_str.size()});
+    ASSERT_EQ(get<Integer>(updated_config["verbosity"]), 0);
+    ASSERT_EQ(get<Boolean>(updated_config["use_rmm"]), false);
+  }
+  {
+    const char *config_str = R"json(
+    {
+      "use_rmm": true
+    }
+  )json";
+    ret = XGBSetGlobalConfig(config_str);
+    ASSERT_EQ(ret, 0);
+    const char *updated_config_cstr;
+    ret = XGBGetGlobalConfig(&updated_config_cstr);
+    ASSERT_EQ(ret, 0);
+
+    std::string updated_config_str{updated_config_cstr};
+    auto updated_config =
+        Json::Load({updated_config_str.data(), updated_config_str.size()});
+    ASSERT_EQ(get<Boolean>(updated_config["use_rmm"]), true);
+  }
+  {
+    const char *config_str = R"json(
+    {
+      "foo": 0
+    }
+  )json";
+    ret = XGBSetGlobalConfig(config_str);
+    ASSERT_EQ(ret , -1);
+    auto err = std::string{XGBGetLastError()};
+    ASSERT_NE(err.find("foo"), std::string::npos);
+  }
+  {
+    const char *config_str = R"json(
+    {
+      "foo": 0,
+      "verbosity": 0
+    }
+  )json";
+    ret = XGBSetGlobalConfig(config_str);
+    ASSERT_EQ(ret , -1);
+    auto err = std::string{XGBGetLastError()};
+    ASSERT_NE(err.find("foo"), std::string::npos);
+    ASSERT_EQ(err.find("verbosity"), std::string::npos);
+  }
+}
+
+TEST(CAPI, BuildInfo) {
+  char const* out;
+  XGBuildInfo(&out);
+  auto loaded = Json::Load(StringView{out});
+  ASSERT_TRUE(get<Object const>(loaded).find("USE_OPENMP") != get<Object const>(loaded).cend());
+  ASSERT_TRUE(get<Object const>(loaded).find("USE_CUDA") != get<Object const>(loaded).cend());
+  ASSERT_TRUE(get<Object const>(loaded).find("USE_NCCL") != get<Object const>(loaded).cend());
 }
 }  // namespace xgboost

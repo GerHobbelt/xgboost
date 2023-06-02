@@ -29,7 +29,7 @@ Joaquin Quinonero Candela)}
 
 International Workshop on Data Mining for Online Advertising (ADKDD) - August 24, 2014
 
-\url{https://research.fb.com/publications/practical-lessons-from-predicting-clicks-on-ads-at-facebook/}.
+\url{https://research.facebook.com/publications/practical-lessons-from-predicting-clicks-on-ads-at-facebook/}.
 
 Extract explaining the method:
 
@@ -59,8 +59,8 @@ a rule on certain features."
 \examples{
 data(agaricus.train, package='xgboost')
 data(agaricus.test, package='xgboost')
-dtrain <- xgb.DMatrix(data = agaricus.train$data, label = agaricus.train$label)
-dtest <- xgb.DMatrix(data = agaricus.test$data, label = agaricus.test$label)
+dtrain <- with(agaricus.train, xgb.DMatrix(data, label = label))
+dtest <- with(agaricus.test, xgb.DMatrix(data, label = label))
 
 param <- list(max_depth=2, eta=1, silent=1, objective='binary:logistic')
 nrounds = 4

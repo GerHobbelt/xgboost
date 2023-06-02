@@ -11,35 +11,16 @@
 #include "sparse_page_source.h"
 #include "ellpack_page.cuh"
 #include "proxy_dmatrix.h"
+#include "proxy_dmatrix.cuh"
 #include "device_adapter.cuh"
 
 namespace xgboost {
 namespace data {
-
-template <typename Fn>
-decltype(auto) Dispatch(DMatrixProxy const* proxy, Fn fn) {
-  if (proxy->Adapter().type() == typeid(std::shared_ptr<CupyAdapter>)) {
-    auto value = dmlc::get<std::shared_ptr<CupyAdapter>>(
-        proxy->Adapter())->Value();
-    return fn(value);
-  } else if (proxy->Adapter().type() == typeid(std::shared_ptr<CudfAdapter>)) {
-    auto value = dmlc::get<std::shared_ptr<CudfAdapter>>(
-        proxy->Adapter())->Value();
-    return fn(value);
-  } else {
-    LOG(FATAL) << "Unknown type: " << proxy->Adapter().type().name();
-    auto value = dmlc::get<std::shared_ptr<CudfAdapter>>(
-        proxy->Adapter())->Value();
-    return fn(value);
-  }
-}
-
 void IterativeDeviceDMatrix::Initialize(DataIterHandle iter_handle, float missing, int nthread) {
   // A handle passed to external iterator.
-  auto handle = static_cast<std::shared_ptr<DMatrix>*>(proxy_);
-  CHECK(handle);
-  DMatrixProxy* proxy = static_cast<DMatrixProxy*>(handle->get());
+  DMatrixProxy* proxy = MakeProxy(proxy_);
   CHECK(proxy);
+
   // The external iterator
   auto iter = DataIterProxy<DataIterResetCallback, XGDMatrixCallbackNext>{
     iter_handle, reset_, next_};
@@ -62,16 +43,18 @@ void IterativeDeviceDMatrix::Initialize(DataIterHandle iter_handle, float missin
   size_t batches = 0;
   size_t accumulated_rows = 0;
   bst_feature_t cols = 0;
-  int32_t device = GenericParameter::kCpuId;
-  int32_t current_device_;
-  dh::safe_cuda(cudaGetDevice(&current_device_));
+
+  int32_t current_device;
+  dh::safe_cuda(cudaGetDevice(&current_device));
   auto get_device = [&]() -> int32_t {
-    int32_t d = GenericParameter::kCpuId ? current_device_ : device;
+    int32_t d = (ctx_.gpu_id == Context::kCpuId) ? current_device : ctx_.gpu_id;
+    CHECK_NE(d, Context::kCpuId);
     return d;
   };
 
   while (iter.Next()) {
-    device = proxy->DeviceIdx();
+    ctx_.gpu_id = proxy->DeviceIdx();
+    CHECK_LT(ctx_.gpu_id, common::AllVisibleGPUs());
     dh::safe_cuda(cudaSetDevice(get_device()));
     if (cols == 0) {
       cols = num_cols();
@@ -79,7 +62,8 @@ void IterativeDeviceDMatrix::Initialize(DataIterHandle iter_handle, float missin
     } else {
       CHECK_EQ(cols, num_cols()) << "Inconsistent number of columns.";
     }
-    sketch_containers.emplace_back(batch_param_.max_bin, cols, num_rows(), get_device());
+    sketch_containers.emplace_back(proxy->Info().feature_types,
+                                   batch_param_.max_bin, cols, num_rows(), get_device());
     auto* p_sketch = &sketch_containers.back();
     proxy->Info().weights_.SetDevice(get_device());
     Dispatch(proxy, [&](auto const &value) {
@@ -101,7 +85,10 @@ void IterativeDeviceDMatrix::Initialize(DataIterHandle iter_handle, float missin
   }
   iter.Reset();
   dh::safe_cuda(cudaSetDevice(get_device()));
-  common::SketchContainer final_sketch(batch_param_.max_bin, cols, accumulated_rows, get_device());
+  HostDeviceVector<FeatureType> ft;
+  common::SketchContainer final_sketch(
+      sketch_containers.empty() ? ft : sketch_containers.front().FeatureTypes(),
+      batch_param_.max_bin, cols, accumulated_rows, get_device());
   for (auto const& sketch : sketch_containers) {
     final_sketch.Merge(sketch.ColumnsPtr(), sketch.Data());
     final_sketch.FixError();
@@ -142,9 +129,13 @@ void IterativeDeviceDMatrix::Initialize(DataIterHandle iter_handle, float missin
         return GetRowCounts(value, row_counts_span, get_device(), missing);
       });
     auto is_dense = this->IsDense();
+
+    proxy->Info().feature_types.SetDevice(get_device());
+    auto d_feature_types = proxy->Info().feature_types.ConstDeviceSpan();
     auto new_impl = Dispatch(proxy, [&](auto const &value) {
-        return EllpackPageImpl(value, missing, get_device(), is_dense, nthread,
-                               row_counts_span, row_stride, rows, cols, cuts);
+      return EllpackPageImpl(value, missing, get_device(), is_dense, nthread,
+                             row_counts_span, d_feature_types, row_stride, rows,
+                             cols, cuts);
     });
     size_t num_elements = page_->Impl()->Copy(get_device(), &new_impl, offset);
     offset += num_elements;
@@ -152,7 +143,7 @@ void IterativeDeviceDMatrix::Initialize(DataIterHandle iter_handle, float missin
     proxy->Info().num_row_ = num_rows();
     proxy->Info().num_col_ = cols;
     if (batches != 1) {
-      this->info_.Extend(std::move(proxy->Info()), false);
+      this->info_.Extend(std::move(proxy->Info()), false, true);
     }
     n_batches_for_verification++;
   }
@@ -161,7 +152,8 @@ void IterativeDeviceDMatrix::Initialize(DataIterHandle iter_handle, float missin
 
   if (batches == 1) {
     this->info_ = std::move(proxy->Info());
-    CHECK_EQ(proxy->Info().labels_.Size(), 0);
+    this->info_.num_nonzero_ = nnz;
+    CHECK_EQ(proxy->Info().labels.Size(), 0);
   }
 
   iter.Reset();
@@ -172,7 +164,7 @@ void IterativeDeviceDMatrix::Initialize(DataIterHandle iter_handle, float missin
 BatchSet<EllpackPage> IterativeDeviceDMatrix::GetEllpackBatches(const BatchParam& param) {
   CHECK(page_);
   auto begin_iter =
-      BatchIterator<EllpackPage>(new SimpleBatchIteratorImpl<EllpackPage>(page_.get()));
+      BatchIterator<EllpackPage>(new SimpleBatchIteratorImpl<EllpackPage>(page_));
   return BatchSet<EllpackPage>(begin_iter);
 }
 }  // namespace data

@@ -1,6 +1,6 @@
 #
-# This file is for the low level reuseable utility functions
-# that are not supposed to be visibe to a user.
+# This file is for the low level reusable utility functions
+# that are not supposed to be visible to a user.
 #
 
 #
@@ -18,6 +18,12 @@ NVL <- function(x, val) {
   if (typeof(x) == 'closure')
     return(x)
   stop("typeof(x) == ", typeof(x), " is not supported by NVL")
+}
+
+# List of classification and ranking objectives
+.CLASSIFICATION_OBJECTIVES <- function() {
+  return(c('binary:logistic', 'binary:logitraw', 'binary:hinge', 'multi:softmax',
+           'multi:softprob', 'rank:pairwise', 'rank:ndcg', 'rank:map'))
 }
 
 
@@ -167,13 +173,13 @@ xgb.iter.eval <- function(booster_handle, watchlist, iter, feval = NULL) {
   evnames <- names(watchlist)
   if (is.null(feval)) {
     msg <- .Call(XGBoosterEvalOneIter_R, booster_handle, as.integer(iter), watchlist, as.list(evnames))
-    msg <- stri_split_regex(msg, '(\\s+|:|\\s+)')[[1]][-1]
-    res <- as.numeric(msg[c(FALSE, TRUE)]) # even indices are the values
-    names(res) <- msg[c(TRUE, FALSE)]      # odds are the names
+    mat <- matrix(strsplit(msg, '\\s+|:')[[1]][-1], nrow = 2)
+    res <- structure(as.numeric(mat[2, ]), names = mat[1, ])
   } else {
     res <- sapply(seq_along(watchlist), function(j) {
       w <- watchlist[[j]]
-      preds <- predict(booster_handle, w, outputmargin = TRUE, ntreelimit = 0) # predict using all trees
+      ## predict using all trees
+      preds <- predict(booster_handle, w, outputmargin = TRUE, iterationrange = c(1, 1))
       eval_res <- feval(preds, w)
       out <- eval_res$value
       names(out) <- paste0(evnames[j], "-", eval_res$metric)
@@ -188,13 +194,23 @@ xgb.iter.eval <- function(booster_handle, watchlist, iter, feval = NULL) {
 # Helper functions for cross validation ---------------------------------------
 #
 
+# Possibly convert the labels into factors, depending on the objective.
+# The labels are converted into factors only when the given objective refers to the classification
+# or ranking tasks.
+convert.labels <- function(labels, objective_name) {
+  if (objective_name %in% .CLASSIFICATION_OBJECTIVES()) {
+    return(as.factor(labels))
+  } else {
+    return(labels)
+  }
+}
+
 # Generates random (stratified if needed) CV folds
 generate.cv.folds <- function(nfold, nrows, stratified, label, params) {
 
   # cannot do it for rank
-  if (exists('objective', where = params) &&
-      is.character(params$objective) &&
-      strtrim(params$objective, 5) == 'rank:') {
+  objective <- params$objective
+  if (is.character(objective) && strtrim(objective, 5) == 'rank:') {
     stop("\n\tAutomatic generation of CV-folds is not implemented for ranking!\n",
          "\tConsider providing pre-computed CV-folds through the 'folds=' parameter.\n")
   }
@@ -207,19 +223,16 @@ generate.cv.folds <- function(nfold, nrows, stratified, label, params) {
     #  - For classification, need to convert y labels to factor before making the folds,
     #    and then do stratification by factor levels.
     #  - For regression, leave y numeric and do stratification by quantiles.
-    if (exists('objective', where = params) &&
-        is.character(params$objective)) {
-      # If 'objective' provided in params, assume that y is a classification label
-      # unless objective is reg:squarederror
-      if (params$objective != 'reg:squarederror')
-        y <- factor(y)
+    if (is.character(objective)) {
+      y <- convert.labels(y, params$objective)
     } else {
       # If no 'objective' given in params, it means that user either wants to
       # use the default 'reg:squarederror' objective or has provided a custom
       # obj function.  Here, assume classification setting when y has 5 or less
       # unique values:
-      if (length(unique(y)) <= 5)
+      if (length(unique(y)) <= 5) {
         y <- factor(y)
+      }
     }
     folds <- xgb.createFolds(y, nfold)
   } else {
@@ -272,7 +285,7 @@ xgb.createFolds <- function(y, k = 10)
     for (i in seq_along(numInClass)) {
       ## create a vector of integers from 1:k as many times as possible without
       ## going over the number of samples in the class. Note that if the number
-      ## of samples in a class is less than k, nothing is producd here.
+      ## of samples in a class is less than k, nothing is produced here.
       seqVector <- rep(seq_len(k), numInClass[i] %/% k)
       ## add enough random integers to get  length(seqVector) == numInClass[i]
       if (numInClass[i] %% k > 0) seqVector <- c(seqVector, sample.int(k, numInClass[i] %% k))
@@ -349,6 +362,7 @@ NULL
 #' # Save as a stand-alone file (JSON); load it with xgb.load()
 #' xgb.save(bst, 'xgb.model.json')
 #' bst2 <- xgb.load('xgb.model.json')
+#' if (file.exists('xgb.model.json')) file.remove('xgb.model.json')
 #'
 #' # Save as a raw byte vector; load it with xgb.load.raw()
 #' xgb_bytes <- xgb.save.raw(bst)
@@ -364,6 +378,7 @@ NULL
 #' obj2 <- readRDS('my_object.rds')
 #' # Re-construct xgb.Booster object from the bytes
 #' bst2 <- xgb.load.raw(obj2$xgb_model_bytes)
+#' if (file.exists('my_object.rds')) file.remove('my_object.rds')
 #'
 #' @name a-compatibility-note-for-saveRDS-save
 NULL

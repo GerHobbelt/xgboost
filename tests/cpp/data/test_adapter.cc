@@ -1,4 +1,4 @@
-// Copyright (c) 2019 by Contributors
+// Copyright (c) 2019-2021 by XGBoost Contributors
 #include <gtest/gtest.h>
 #include <type_traits>
 #include <utility>
@@ -35,6 +35,28 @@ TEST(Adapter, CSRAdapter) {
   EXPECT_EQ(line2.GetElement(0).column_idx, 1);
 }
 
+TEST(Adapter, CSRArrayAdapter) {
+  HostDeviceVector<bst_row_t> indptr;
+  HostDeviceVector<float> values;
+  HostDeviceVector<bst_feature_t> indices;
+  size_t n_features = 100, n_samples = 10;
+  RandomDataGenerator{n_samples, n_features, 0.5}.GenerateCSR(&values, &indptr, &indices);
+  using linalg::MakeVec;
+  auto indptr_arr = ArrayInterfaceStr(MakeVec(indptr.HostPointer(), indptr.Size()));
+  auto values_arr = ArrayInterfaceStr(MakeVec(values.HostPointer(), values.Size()));
+  auto indices_arr = ArrayInterfaceStr(MakeVec(indices.HostPointer(), indices.Size()));
+  auto adapter = data::CSRArrayAdapter(
+      StringView{indptr_arr.c_str(), indptr_arr.size()},
+      StringView{values_arr.c_str(), values_arr.size()},
+      StringView{indices_arr.c_str(), indices_arr.size()}, n_features);
+  auto batch = adapter.Value();
+  ASSERT_EQ(batch.NumRows(), n_samples);
+  ASSERT_EQ(batch.NumCols(), n_features);
+
+  ASSERT_EQ(adapter.NumRows(), n_samples);
+  ASSERT_EQ(adapter.NumColumns(), n_features);
+}
+
 TEST(Adapter, CSCAdapterColsMoreThanRows) {
   std::vector<float> data = {1, 2, 3, 4, 5, 6, 7, 8};
   std::vector<unsigned> row_idx = {0, 1, 0, 1, 0, 1, 0, 1};
@@ -47,7 +69,8 @@ TEST(Adapter, CSCAdapterColsMoreThanRows) {
   EXPECT_EQ(dmat.Info().num_nonzero_, 8);
 
   auto &batch = *dmat.GetBatches<SparsePage>().begin();
-  auto inst = batch[0];
+  auto page = batch.GetView();
+  auto inst = page[0];
   EXPECT_EQ(inst[0].fvalue, 1);
   EXPECT_EQ(inst[0].index, 0);
   EXPECT_EQ(inst[1].fvalue, 3);
@@ -57,7 +80,7 @@ TEST(Adapter, CSCAdapterColsMoreThanRows) {
   EXPECT_EQ(inst[3].fvalue, 7);
   EXPECT_EQ(inst[3].index, 3);
 
-  inst = batch[1];
+  inst = page[1];
   EXPECT_EQ(inst[0].fvalue, 2);
   EXPECT_EQ(inst[0].index, 0);
   EXPECT_EQ(inst[1].fvalue, 4);
@@ -137,5 +160,4 @@ TEST(Adapter, IteratorAdapter) {
   }
   ASSERT_EQ(num_batch, 1);
 }
-
 }  // namespace xgboost

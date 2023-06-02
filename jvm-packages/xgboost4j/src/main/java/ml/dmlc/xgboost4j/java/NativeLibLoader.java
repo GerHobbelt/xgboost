@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014, 2021 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -17,6 +17,12 @@ package ml.dmlc.xgboost4j.java;
 
 import java.io.*;
 import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -29,12 +35,133 @@ import org.apache.commons.logging.LogFactory;
 public class NativeLibLoader {
   private static final Log logger = LogFactory.getLog(NativeLibLoader.class);
 
+  private static Path mappedFilesBaseDir = Paths.get("/proc/self/map_files");
+
+  /**
+   * Supported OS enum.
+   */
+  enum OS {
+    WINDOWS("windows"),
+    MACOS("macos"),
+    LINUX("linux"),
+    LINUX_MUSL("linux-musl"),
+    SOLARIS("solaris");
+
+    final String name;
+
+    OS(String name) {
+      this.name = name;
+    }
+
+    static void setMappedFilesBaseDir(Path baseDir) {
+      mappedFilesBaseDir = baseDir;
+    }
+
+    /**
+     * Detects the OS using the system properties.
+     * Throws IllegalStateException if the OS is not recognized.
+     * @return The OS.
+     */
+    static OS detectOS() {
+      String os = System.getProperty("os.name", "generic").toLowerCase(Locale.ENGLISH);
+      if (os.contains("mac") || os.contains("darwin")) {
+        return MACOS;
+      } else if (os.contains("win")) {
+        return WINDOWS;
+      } else if (os.contains("nux")) {
+        return isMuslBased() ? LINUX_MUSL : LINUX;
+      } else if (os.contains("sunos")) {
+        return SOLARIS;
+      } else {
+        throw new IllegalStateException("Unsupported OS:" + os);
+      }
+    }
+
+    /**
+     * Checks if the Linux OS is musl based. For this, we check the memory-mapped
+     * filenames and see if one of those contains the string "musl".
+     *
+     * @return true if the Linux OS is musl based, false otherwise.
+     */
+    static boolean isMuslBased() {
+      try (Stream<Path> dirStream = Files.list(mappedFilesBaseDir)) {
+        Optional<String> muslRelatedMemoryMappedFilename = dirStream
+            .map(OS::toRealPath)
+            .filter(s -> s.toLowerCase().contains("musl"))
+            .findFirst();
+
+        muslRelatedMemoryMappedFilename.ifPresent(muslFilename -> {
+          logger.debug("Assuming that detected Linux OS is musl-based, "
+              + "because a memory-mapped file '" + muslFilename + "' was found.");
+        });
+
+        return muslRelatedMemoryMappedFilename.isPresent();
+      } catch (Exception ignored) {
+        // ignored
+      }
+      return false;
+    }
+
+    private static String toRealPath(Path path) {
+      try {
+        return path.toRealPath().toString();
+      } catch (IOException e) {
+        return "";
+      }
+    }
+
+  }
+
+  /**
+   * Supported architecture enum.
+   */
+  enum Arch {
+    X86_64("x86_64"),
+    AARCH64("aarch64"),
+    SPARC("sparc");
+
+    final String name;
+
+    Arch(String name) {
+      this.name = name;
+    }
+
+    /**
+     * Detects the chip architecture using the system properties.
+     * Throws IllegalStateException if the architecture is not recognized.
+     * @return The architecture.
+     */
+    static Arch detectArch() {
+      String arch = System.getProperty("os.arch", "generic").toLowerCase(Locale.ENGLISH);
+      if (arch.startsWith("amd64") || arch.startsWith("x86_64")) {
+        return X86_64;
+      } else if (arch.startsWith("aarch64") || arch.startsWith("arm64")) {
+        return AARCH64;
+      } else if (arch.startsWith("sparc")) {
+        return SPARC;
+      } else {
+        throw new IllegalStateException("Unsupported architecture:" + arch);
+      }
+    }
+  }
+
   private static boolean initialized = false;
   private static INativeLibLoader loader = null;
   private static final String nativePath = "../../lib/";
-  private static final String nativeResourcePath = "/lib/";
+  private static final String nativeResourcePath = "/lib";
   private static final String[] libNames = new String[]{"xgboost4j"};
 
+  /**
+   * Loads the XGBoost library.
+   * <p>
+   * Throws IllegalStateException if the architecture or OS is unsupported.
+   * <ul>
+   *   <li>Supported OS: macOS, Windows, Linux, Solaris.</li>
+   *   <li>Supported Architectures: x86_64, aarch64, sparc.</li>
+   * </ul>
+   * Throws UnsatisfiedLinkError if the library failed to load its dependencies.
+   * @throws IOException If the library could not be extracted from the jar.
+   */
   public static synchronized void initXGBoost() throws IOException {
     if (!initialized) {
       // patch classloader class
@@ -78,12 +205,53 @@ public class NativeLibLoader {
     }
     @Override
     public void loadNativeLibs() throws IOException {
+      OS os = OS.detectOS();
+      Arch arch = Arch.detectArch();
+      String platform = os.name + "/" + arch.name;
       for (String libName : libNames) {
         try {
-          String libraryFromJar = nativeResourcePath + System.mapLibraryName(libName);
-          loadLibraryFromJar(libraryFromJar);
+          String libraryPathInJar = nativeResourcePath + "/" +
+              platform + "/" + System.mapLibraryName(libName);
+          loadLibraryFromJar(libraryPathInJar);
+        } catch (UnsatisfiedLinkError ule) {
+          String failureMessageIncludingOpenMPHint = "Failed to load " + libName + " " +
+              "due to missing native dependencies for " +
+              "platform " + platform + ", " +
+              "this is likely due to a missing OpenMP dependency";
+
+          switch (os) {
+            case WINDOWS:
+              logger.error(failureMessageIncludingOpenMPHint);
+              logger.error("You may need to install 'vcomp140.dll' or 'libgomp-1.dll'");
+              break;
+            case MACOS:
+              logger.error(failureMessageIncludingOpenMPHint);
+              logger.error("You may need to install 'libomp.dylib', via `brew install libomp` " +
+                  "or similar");
+              break;
+            case LINUX:
+              logger.error(failureMessageIncludingOpenMPHint);
+              logger.error("You may need to install 'libgomp.so' (or glibc) via your package " +
+                  "manager.");
+              logger.error("Alternatively, your Linux OS is musl-based " +
+                  "but wasn't detected as such.");
+              break;
+            case LINUX_MUSL:
+              logger.error(failureMessageIncludingOpenMPHint);
+              logger.error("You may need to install 'libgomp.so' (or glibc) via your package " +
+                  "manager.");
+              logger.error("Alternatively, your Linux OS was wrongly detected as musl-based, " +
+                  "although it is not.");
+              break;
+            case SOLARIS:
+              logger.error(failureMessageIncludingOpenMPHint);
+              logger.error("You may need to install 'libgomp.so' (or glibc) via your package " +
+                  "manager.");
+              break;
+          }
+          throw ule;
         } catch (IOException ioe) {
-          logger.error("failed to load " + libName + " library from jar");
+          logger.error("Failed to load " + libName + " library from jar for platform " + platform);
           throw ioe;
         }
       }
@@ -107,9 +275,8 @@ public class NativeLibLoader {
    * @throws IllegalArgumentException If the path is not absolute or if the filename is shorter than
    * three characters
    */
-  private static void loadLibraryFromJar(String path) throws IOException, IllegalArgumentException{
+  private static void loadLibraryFromJar(String path) throws IOException, IllegalArgumentException {
     String temp = createTempFileFromResource(path);
-    // Finally, load the library
     System.load(temp);
   }
 
@@ -124,8 +291,8 @@ public class NativeLibLoader {
    * {@code path}.
    * @param path Path to the resources in the jar
    * @return The created temp file.
-   * @throws IOException
-   * @throws IllegalArgumentException
+   * @throws IOException If it failed to read the file.
+   * @throws IllegalArgumentException If the filename is invalid.
    */
   static String createTempFileFromResource(String path) throws
           IOException, IllegalArgumentException {
@@ -137,7 +304,7 @@ public class NativeLibLoader {
     String[] parts = path.split("/");
     String filename = (parts.length > 1) ? parts[parts.length - 1] : null;
 
-    // Split filename to prexif and suffix (extension)
+    // Split filename to prefix and suffix (extension)
     String prefix = "";
     String suffix = null;
     if (filename != null) {
@@ -163,22 +330,18 @@ public class NativeLibLoader {
     int readBytes;
 
     // Open and check input stream
-    InputStream is = NativeLibLoader.class.getResourceAsStream(path);
-    if (is == null) {
-      throw new FileNotFoundException("File " + path + " was not found inside JAR.");
-    }
+    try (InputStream is = NativeLibLoader.class.getResourceAsStream(path);
+         OutputStream os = new FileOutputStream(temp)) {
+      if (is == null) {
+        throw new FileNotFoundException("File " + path + " was not found inside JAR.");
+      }
 
-    // Open output stream and copy data between source file in JAR and the temporary file
-    OutputStream os = new FileOutputStream(temp);
-    try {
+      // Open output stream and copy data between source file in JAR and the temporary file
       while ((readBytes = is.read(buffer)) != -1) {
         os.write(buffer, 0, readBytes);
       }
-    } finally {
-      // If read/write fails, close streams safely before throwing an exception
-      os.close();
-      is.close();
     }
+
     return temp.getAbsolutePath();
   }
 

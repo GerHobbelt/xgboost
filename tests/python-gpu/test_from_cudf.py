@@ -5,6 +5,7 @@ import pytest
 
 sys.path.append("tests/python")
 import testing as tm
+from test_dmatrix import set_base_margin_info
 
 
 def dmatrix_from_cudf(input_type, DMatrixT, missing=np.NAN):
@@ -59,8 +60,9 @@ def _test_from_cudf(DMatrixT):
     assert dtrain.feature_names == ['x']
     assert dtrain.feature_types == ['int']
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match=r".*multi.*"):
         dtrain = DMatrixT(cd, label=cd)
+        xgb.train({"tree_method": "gpu_hist", "objective": "multi:softprob"}, dtrain)
 
     # Test when number of elements is less than 8
     X = cudf.DataFrame({'x': cudf.Series([0, 1, 2, np.NAN, 4],
@@ -142,6 +144,8 @@ def _test_cudf_metainfo(DMatrixT):
                           dmat_cudf.get_float_info('base_margin'))
     assert np.array_equal(dmat.get_uint_info('group_ptr'), dmat_cudf.get_uint_info('group_ptr'))
 
+    set_base_margin_info(df, DMatrixT, "gpu_hist")
+
 
 class TestFromColumnar:
     '''Tests for constructing DMatrix from data structure conforming Apache
@@ -171,6 +175,80 @@ Arrow specification.'''
     def test_cudf_metainfo_device_dmatrix(self):
         _test_cudf_metainfo(xgb.DeviceQuantileDMatrix)
 
+    @pytest.mark.skipif(**tm.no_cudf())
+    def test_cudf_categorical(self):
+        import cudf
+        _X, _y = tm.make_categorical(100, 30, 17, False)
+        X = cudf.from_pandas(_X)
+        y = cudf.from_pandas(_y)
+
+        Xy = xgb.DMatrix(X, y, enable_categorical=True)
+        assert len(Xy.feature_types) == X.shape[1]
+        assert all(t == "c" for t in Xy.feature_types)
+
+        Xy = xgb.DeviceQuantileDMatrix(X, y, enable_categorical=True)
+        assert len(Xy.feature_types) == X.shape[1]
+        assert all(t == "c" for t in Xy.feature_types)
+
+        # test missing value
+        X = cudf.DataFrame({"f0": ["a", "b", np.NaN]})
+        X["f0"] = X["f0"].astype("category")
+        df, cat_codes, _, _ = xgb.data._transform_cudf_df(
+            X, None, None, enable_categorical=True
+        )
+        for col in cat_codes:
+            assert col.has_nulls
+
+        y = [0, 1, 2]
+        with pytest.raises(ValueError):
+            xgb.DMatrix(X, y)
+        Xy = xgb.DMatrix(X, y, enable_categorical=True)
+        assert Xy.num_row() == 3
+        assert Xy.num_col() == 1
+
+        with pytest.raises(ValueError):
+            xgb.DeviceQuantileDMatrix(X, y)
+
+        Xy = xgb.DeviceQuantileDMatrix(X, y, enable_categorical=True)
+        assert Xy.num_row() == 3
+        assert Xy.num_col() == 1
+
+        X = X["f0"]
+        with pytest.raises(ValueError):
+            xgb.DMatrix(X, y)
+
+        Xy = xgb.DMatrix(X, y, enable_categorical=True)
+        assert Xy.num_row() == 3
+        assert Xy.num_col() == 1
+
+
+@pytest.mark.skipif(**tm.no_cudf())
+@pytest.mark.skipif(**tm.no_cupy())
+@pytest.mark.skipif(**tm.no_sklearn())
+@pytest.mark.skipif(**tm.no_pandas())
+def test_cudf_training_with_sklearn():
+    from cudf import DataFrame as df
+    from cudf import Series as ss
+    import pandas as pd
+    np.random.seed(1)
+    X = pd.DataFrame(np.random.randn(50, 10))
+    y = pd.DataFrame((np.random.randn(50) > 0).astype(np.int8))
+    weights = np.random.random(50) + 1.0
+    cudf_weights = df.from_pandas(pd.DataFrame(weights))
+    base_margin = np.random.random(50)
+    cudf_base_margin = df.from_pandas(pd.DataFrame(base_margin))
+
+    X_cudf = df.from_pandas(X)
+    y_cudf = df.from_pandas(y)
+    y_cudf_series = ss(data=y.iloc[:, 0])
+
+    for y_obj in [y_cudf, y_cudf_series]:
+        clf = xgb.XGBClassifier(gpu_id=0, tree_method='gpu_hist')
+        clf.fit(X_cudf, y_obj, sample_weight=cudf_weights, base_margin=cudf_base_margin,
+                eval_set=[(X_cudf, y_obj)])
+        pred = clf.predict(X_cudf)
+        assert np.array_equal(np.unique(pred), np.array([0, 1]))
+
 
 class IterForDMatrixTest(xgb.core.DataIter):
     '''A data iterator for XGBoost DMatrix.
@@ -182,19 +260,28 @@ class IterForDMatrixTest(xgb.core.DataIter):
     ROWS_PER_BATCH = 100            # data is splited by rows
     BATCHES = 16
 
-    def __init__(self):
+    def __init__(self, categorical):
         '''Generate some random data for demostration.
 
         Actual data can be anything that is currently supported by XGBoost.
         '''
         import cudf
         self.rows = self.ROWS_PER_BATCH
-        rng = np.random.RandomState(1994)
-        self._data = [
-            cudf.DataFrame(
-                {'a': rng.randn(self.ROWS_PER_BATCH),
-                 'b': rng.randn(self.ROWS_PER_BATCH)})] * self.BATCHES
-        self._labels = [rng.randn(self.rows)] * self.BATCHES
+
+        if categorical:
+            self._data = []
+            self._labels = []
+            for i in range(self.BATCHES):
+                X, y = tm.make_categorical(self.ROWS_PER_BATCH, 4, 13, False)
+                self._data.append(cudf.from_pandas(X))
+                self._labels.append(y)
+        else:
+            rng = np.random.RandomState(1994)
+            self._data = [
+                cudf.DataFrame(
+                    {'a': rng.randn(self.ROWS_PER_BATCH),
+                     'b': rng.randn(self.ROWS_PER_BATCH)})] * self.BATCHES
+            self._labels = [rng.randn(self.rows)] * self.BATCHES
 
         self.it = 0             # set iterator to 0
         super().__init__()
@@ -229,24 +316,26 @@ class IterForDMatrixTest(xgb.core.DataIter):
 
 
 @pytest.mark.skipif(**tm.no_cudf())
-def test_from_cudf_iter():
+@pytest.mark.parametrize("enable_categorical", [True, False])
+def test_from_cudf_iter(enable_categorical):
     rounds = 100
-    it = IterForDMatrixTest()
+    it = IterForDMatrixTest(enable_categorical)
+    params = {"tree_method": "gpu_hist"}
 
     # Use iterator
-    m_it = xgb.DeviceQuantileDMatrix(it)
-    reg_with_it = xgb.train({'tree_method': 'gpu_hist'}, m_it,
-                            num_boost_round=rounds)
-    predict_with_it = reg_with_it.predict(m_it)
+    m_it = xgb.DeviceQuantileDMatrix(it, enable_categorical=enable_categorical)
+    reg_with_it = xgb.train(params, m_it, num_boost_round=rounds)
 
-    # Without using iterator
-    m = xgb.DMatrix(it.as_array(), it.as_array_labels())
+    X = it.as_array()
+    y = it.as_array_labels()
+
+    m = xgb.DMatrix(X, y, enable_categorical=enable_categorical)
 
     assert m_it.num_col() == m.num_col()
     assert m_it.num_row() == m.num_row()
 
-    reg = xgb.train({'tree_method': 'gpu_hist'}, m,
-                    num_boost_round=rounds)
-    predict = reg.predict(m)
+    reg = xgb.train(params, m, num_boost_round=rounds)
 
+    predict = reg.predict(m)
+    predict_with_it = reg_with_it.predict(m_it)
     np.testing.assert_allclose(predict_with_it, predict)

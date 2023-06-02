@@ -1,5 +1,5 @@
 /*!
- * Copyright (c) by Contributors 2019
+ * Copyright (c) by Contributors 2019-2022
  */
 #include <gtest/gtest.h>
 #include <dmlc/filesystem.h>
@@ -222,7 +222,7 @@ TEST(Json, ParseArray) {
   auto json = Json::Load(StringView{str.c_str(), str.size()});
   json = json["nodes"];
   std::vector<Json> arr = get<JsonArray>(json);
-  ASSERT_EQ(arr.size(), 3);
+  ASSERT_EQ(arr.size(), 3ul);
   Json v0 = arr[0];
   ASSERT_EQ(get<Integer>(v0["depth"]), 3);
   ASSERT_NEAR(get<Number>(v0["gain"]), 10.4866, kRtEps);
@@ -255,6 +255,10 @@ TEST(Json, Null) {
 
   json = Json::Load({null_input.c_str(), null_input.size()});
   ASSERT_TRUE(IsA<Null>(json["key"]));
+
+  std::string dumped;
+  Json::Dump(json, &dumped, std::ios::binary);
+  ASSERT_TRUE(IsA<Null>(Json::Load(StringView{dumped}, std::ios::binary)["key"]));
 }
 
 TEST(Json, EmptyObject) {
@@ -284,7 +288,7 @@ TEST(Json, EmptyArray) {
   std::istringstream iss(str);
   auto json = Json::Load(StringView{str.c_str(), str.size()});
   auto arr = get<JsonArray>(json["leaf_vector"]);
-  ASSERT_EQ(arr.size(), 0);
+  ASSERT_EQ(arr.size(), 0ul);
 }
 
 TEST(Json, Boolean) {
@@ -297,6 +301,10 @@ TEST(Json, Boolean) {
   Json j {Json::Load(StringView{str.c_str(), str.size()})};
   ASSERT_EQ(get<JsonBoolean>(j["left_child"]), true);
   ASSERT_EQ(get<JsonBoolean>(j["right_child"]), false);
+
+  std::string dumped;
+  Json::Dump(j, &dumped, std::ios::binary);
+  ASSERT_TRUE(get<Boolean const>(Json::Load(StringView{dumped}, std::ios::binary)["left_child"]));
 }
 
 TEST(Json, Indexing) {
@@ -315,7 +323,7 @@ TEST(Json, AssigningObjects) {
     Json json;
     json = JsonObject();
     json["Okay"] = JsonArray();
-    ASSERT_EQ(get<JsonArray>(json["Okay"]).size(), 0);
+    ASSERT_EQ(get<JsonArray>(json["Okay"]).size(), 0ul);
   }
 
   {
@@ -332,6 +340,7 @@ TEST(Json, AssigningObjects) {
     auto str = JsonString("1");
     auto& k = json_object["1"];
     k  = std::move(str);
+    ASSERT_TRUE(str.GetString().empty());  // NOLINT
     auto& m = json_object["1"];
     std::string value = get<JsonString>(m);
     ASSERT_EQ(value, "1");
@@ -373,6 +382,11 @@ TEST(Json, AssigningNumber) {
     ASSERT_EQ(value, 4);
     value = 15;  // NOLINT
     ASSERT_EQ(get<Number>(json), 4);
+  }
+
+  {
+    Json value {Number(std::numeric_limits<float>::quiet_NaN())};
+    ASSERT_TRUE(IsA<Number>(value));
   }
 }
 
@@ -451,9 +465,10 @@ TEST(Json, Invalid) {
     bool has_thrown = false;
     try {
       Json load{Json::Load(StringView(str.c_str(), str.size()))};
-    } catch (dmlc::Error const &e) {
+    } catch (dmlc::Error const& e) {
       std::string msg = e.what();
-      ASSERT_NE(msg.find("EOF"), std::string::npos);
+      // EOF is printed as 255 on s390x
+      ASSERT_TRUE(msg.find("EOF") != std::string::npos || msg.find("255") != std::string::npos);
       has_thrown = true;
     };
     ASSERT_TRUE(has_thrown);
@@ -525,7 +540,8 @@ TEST(Json, IntVSFloat) {
   }
 }
 
-TEST(Json, RoundTrip) {
+namespace {
+void TestRroundTrip(std::ios::openmode mode) {
   uint32_t i = 0;
   SimpleLCG rng;
   SimpleRealUniformDistribution<float> dist(1.0f, 4096.0f);
@@ -534,10 +550,10 @@ TEST(Json, RoundTrip) {
     float f;
     std::memcpy(&f, &i, sizeof(f));
 
-    Json jf { f };
+    Json jf{f};
     std::string str;
-    Json::Dump(jf, &str);
-    auto loaded = Json::Load({str.c_str(), str.size()});
+    Json::Dump(jf, &str, mode);
+    auto loaded = Json::Load(StringView{str}, mode);
     if (XGBOOST_EXPECT(std::isnan(f), false)) {
       ASSERT_TRUE(std::isnan(get<Number const>(loaded)));
     } else {
@@ -550,6 +566,12 @@ TEST(Json, RoundTrip) {
       break;
     }
   }
+}
+}  // namespace
+
+TEST(Json, RoundTrip) {
+  TestRroundTrip(std::ios::out);
+  TestRroundTrip(std::ios::binary);
 }
 
 TEST(Json, DISABLED_RoundTripExhaustive) {
@@ -568,9 +590,90 @@ TEST(Json, DISABLED_RoundTripExhaustive) {
     }
   };
   int64_t int32_max = static_cast<int64_t>(std::numeric_limits<uint32_t>::max());
-#pragma omp parallel for schedule(static)
-  for (int64_t i = 0; i <= int32_max; ++i) {
-    test(static_cast<uint32_t>(i));
+  GenericParameter ctx;
+  common::ParallelFor(int32_max, ctx.Threads(), [&](auto i) { test(static_cast<uint32_t>(i)); });
+}
+
+TEST(Json, TypedArray) {
+  size_t n = 16;
+  F32Array f32{n};
+  std::iota(f32.GetArray().begin(), f32.GetArray().end(), -8);
+  U8Array u8{n};
+  std::iota(u8.GetArray().begin(), u8.GetArray().end(), 0);
+  I32Array i32{n};
+  std::iota(i32.GetArray().begin(), i32.GetArray().end(), -8);
+  I64Array i64{n};
+  std::iota(i64.GetArray().begin(), i64.GetArray().end(), -8);
+
+  Json json{Object{}};
+  json["u8"] = std::move(u8);
+  ASSERT_TRUE(IsA<U8Array>(json["u8"]));
+  json["f32"] = std::move(f32);
+  ASSERT_TRUE(IsA<F32Array>(json["f32"]));
+  json["i32"] = std::move(i32);
+  ASSERT_TRUE(IsA<I32Array>(json["i32"]));
+  json["i64"] = std::move(i64);
+  ASSERT_TRUE(IsA<I64Array>(json["i64"]));
+
+  std::string str;
+  Json::Dump(json, &str);
+  {
+    auto loaded = Json::Load(StringView{str});
+    // for text output there's no typed array.
+    ASSERT_TRUE(IsA<Array>(loaded["u8"]));
+    auto const& arr = loaded["f32"];
+    for (int32_t i = -8; i < 8; ++i) {
+      ASSERT_EQ(get<Number>(arr[i + 8]), i);
+    }
+  }
+
+  std::string binary;
+  Json::Dump(json, &binary, std::ios::binary);
+  {
+    auto loaded = Json::Load(StringView{binary}, std::ios::binary);
+    ASSERT_TRUE(IsA<U8Array>(loaded["u8"]));
+    auto const& arr = get<F32Array>(loaded["f32"]);
+    for (int32_t i = -8; i < 8; ++i) {
+      ASSERT_EQ(arr[i + 8], i);
+    }
+  }
+}
+
+TEST(UBJson, Basic) {
+  auto run_test = [](StringView str) {
+    auto json = Json::Load(str);
+    std::vector<char> stream;
+    UBJWriter writer{&stream};
+    Json::Dump(json, &writer);
+    {
+      std::ofstream fout{"test.ubj", std::ios::binary | std::ios::out};
+      fout.write(stream.data(), stream.size());
+    }
+
+    auto data = common::LoadSequentialFile("test.ubj");
+    UBJReader reader{StringView{data}};
+    json = reader.Load();
+    return json;
+  };
+  {
+    // empty
+    auto ret = run_test(R"({})");
+    std::stringstream ss;
+    ss << ret;
+    ASSERT_EQ(ss.str(), "{}");
+  }
+  {
+    auto ret = run_test(R"({"":[]})");
+    std::stringstream ss;
+    ss << ret;
+    ASSERT_EQ(ss.str(), R"({"":[]})");
+  }
+  {
+    // basic
+    auto ret = run_test(R"({"test": [2.71, 3.14, Infinity]})");
+    ASSERT_TRUE(std::isinf(get<Number>(get<Array>(ret["test"])[2])));
+    ASSERT_FLOAT_EQ(3.14, get<Number>(get<Array>(ret["test"])[1]));
+    ASSERT_FLOAT_EQ(2.71, get<Number>(get<Array>(ret["test"])[0]));
   }
 }
 }  // namespace xgboost

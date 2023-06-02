@@ -7,7 +7,7 @@
 
 namespace xgboost {
 namespace data {
-TEST(ProxyDMatrix, Basic) {
+TEST(ProxyDMatrix, DeviceData) {
   constexpr size_t kRows{100}, kCols{100};
   HostDeviceVector<float> storage;
   auto data = RandomDataGenerator(kRows, kCols, 0.5)
@@ -23,7 +23,7 @@ TEST(ProxyDMatrix, Basic) {
   proxy.SetInfo("label", labels.c_str());
 
   ASSERT_EQ(proxy.Adapter().type(), typeid(std::shared_ptr<CupyAdapter>));
-  ASSERT_EQ(proxy.Info().labels_.Size(), kRows);
+  ASSERT_EQ(proxy.Info().labels.Size(), kRows);
   ASSERT_EQ(dmlc::get<std::shared_ptr<CupyAdapter>>(proxy.Adapter())->NumRows(),
             kRows);
   ASSERT_EQ(

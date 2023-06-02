@@ -21,7 +21,7 @@ void TestEquivalent(float sparsity) {
   std::unique_ptr<EllpackPageImpl> page_concatenated {
     new EllpackPageImpl(0, first->Cuts(), first->is_dense,
                         first->row_stride, 1000 * 100)};
-  for (auto& batch : m.GetBatches<EllpackPage>()) {
+  for (auto& batch : m.GetBatches<EllpackPage>({})) {
     auto page = batch.Impl();
     size_t num_elements = page_concatenated->Copy(0, page, offset);
     offset += num_elements;
@@ -68,7 +68,16 @@ void TestEquivalent(float sparsity) {
     auto const& buffer_from_iter = page_concatenated->gidx_buffer;
     auto const& buffer_from_data = ellpack.Impl()->gidx_buffer;
     ASSERT_NE(buffer_from_data.Size(), 0);
-    ASSERT_EQ(buffer_from_data.ConstHostVector(), buffer_from_data.ConstHostVector());
+
+    common::CompressedIterator<uint32_t> data_buf{
+        buffer_from_data.ConstHostPointer(), from_data.NumSymbols()};
+    common::CompressedIterator<uint32_t> data_iter{
+        buffer_from_iter.ConstHostPointer(), from_iter.NumSymbols()};
+    CHECK_EQ(from_data.NumSymbols(), from_iter.NumSymbols());
+    CHECK_EQ(from_data.n_rows * from_data.row_stride, from_data.n_rows * from_iter.row_stride);
+    for (size_t i = 0; i < from_data.n_rows * from_data.row_stride; ++i) {
+      CHECK_EQ(data_buf[i], data_iter[i]);
+    }
   }
 }
 
@@ -84,7 +93,7 @@ TEST(IterativeDeviceDMatrix, RowMajor) {
       0, 256);
   size_t n_batches = 0;
   std::string interface_str = iter.AsArray();
-  for (auto& ellpack : m.GetBatches<EllpackPage>()) {
+  for (auto& ellpack : m.GetBatches<EllpackPage>({})) {
     n_batches ++;
     auto impl = ellpack.Impl();
     common::CompressedIterator<uint32_t> iterator(
@@ -94,9 +103,9 @@ TEST(IterativeDeviceDMatrix, RowMajor) {
 
     auto j_interface =
         Json::Load({interface_str.c_str(), interface_str.size()});
-    ArrayInterface loaded {get<Object const>(j_interface)};
+    ArrayInterface<2> loaded {get<Object const>(j_interface)};
     std::vector<float> h_data(cols * rows);
-    common::Span<float> s_data{static_cast<float*>(loaded.data), cols * rows};
+    common::Span<float const> s_data{static_cast<float const*>(loaded.data), cols * rows};
     dh::CopyDeviceSpanToVector(&h_data, s_data);
 
     for(auto i = 0ull; i < rows * cols; i++) {
@@ -119,9 +128,9 @@ TEST(IterativeDeviceDMatrix, RowMajorMissing) {
   std::string interface_str = iter.AsArray();
   auto j_interface =
       Json::Load({interface_str.c_str(), interface_str.size()});
-  ArrayInterface loaded {get<Object const>(j_interface)};
+  ArrayInterface<2> loaded {get<Object const>(j_interface)};
   std::vector<float> h_data(cols * rows);
-  common::Span<float> s_data{static_cast<float*>(loaded.data), cols * rows};
+  common::Span<float const> s_data{static_cast<float const*>(loaded.data), cols * rows};
   dh::CopyDeviceSpanToVector(&h_data, s_data);
   h_data[1] = kMissing;
   h_data[5] = kMissing;
@@ -133,7 +142,7 @@ TEST(IterativeDeviceDMatrix, RowMajorMissing) {
   IterativeDeviceDMatrix m(
       &iter, iter.Proxy(), Reset, Next, std::numeric_limits<float>::quiet_NaN(),
       0, 256);
-  auto &ellpack = *m.GetBatches<EllpackPage>({0, 256, 0}).begin();
+  auto &ellpack = *m.GetBatches<EllpackPage>({0, 256}).begin();
   auto impl = ellpack.Impl();
   common::CompressedIterator<uint32_t> iterator(
       impl->gidx_buffer.HostVector().data(), impl->NumSymbols());

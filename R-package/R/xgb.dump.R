@@ -6,8 +6,6 @@
 #' @param fname the name of the text file where to save the model text dump.
 #'        If not provided or set to \code{NULL}, the model is returned as a \code{character} vector.
 #' @param fmap feature map file representing feature types.
-#'        Detailed description could be found at
-#'        \url{https://github.com/dmlc/xgboost/wiki/Binary-Classification#dump-model}.
 #'        See demo/ for walkthrough example in R, and
 #'        \url{https://github.com/dmlc/xgboost/blob/master/demo/data/featmap.txt}
 #'        for example Format.
@@ -56,16 +54,17 @@ xgb.dump <- function(model, fname = NULL, fmap = "", with_stats=FALSE,
                       as.character(dump_format))
 
   if (is.null(fname))
-    model_dump <- stri_replace_all_regex(model_dump, '\t', '')
+    model_dump <- gsub('\t', '', model_dump, fixed = TRUE)
 
   if (dump_format == "text")
-    model_dump <- unlist(stri_split_regex(model_dump, '\n'))
+    model_dump <- unlist(strsplit(model_dump, '\n', fixed = TRUE))
 
   model_dump <- grep('^\\s*$', model_dump, invert = TRUE, value = TRUE)
 
   if (is.null(fname)) {
     return(model_dump)
   } else {
+    fname <- path.expand(fname)
     writeLines(model_dump, fname[1])
     return(TRUE)
   }

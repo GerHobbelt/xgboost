@@ -14,6 +14,7 @@ dependencies:
 - pandas
 - matplotlib
 - dask
+- distributed
 - python-graphviz
 - hypothesis
 - astroid
@@ -23,11 +24,21 @@ dependencies:
 - mock
 - breathe
 - pytest
+- pytest-cov
 - python-kubernetes
 - urllib3
 - jsonschema
 - boto3
 - awscli
+- numba
+- llvmlite
+- py-ubjson
+- cffi
+- pyarrow
+- protobuf<=3.20
 - pip:
-  - guzzle_sphinx_theme
+  - shap
+  - ipython                     # required by shap at import time.
+  - sphinx_rtd_theme
   - datatable
+  - modin[all]

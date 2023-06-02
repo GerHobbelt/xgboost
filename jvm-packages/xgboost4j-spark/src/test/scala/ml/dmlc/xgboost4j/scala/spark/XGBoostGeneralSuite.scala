@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2014 by Contributors
+ Copyright (c) 2014-2022 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -17,10 +17,13 @@
 package ml.dmlc.xgboost4j.scala.spark
 
 import scala.util.Random
+
 import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
 import ml.dmlc.xgboost4j.scala.DMatrix
-import org.apache.spark.{TaskContext}
+
+import org.apache.spark.{SparkException, TaskContext}
 import org.scalatest.FunSuite
+
 import org.apache.spark.ml.feature.VectorAssembler
 import org.apache.spark.sql.functions.lit
 
@@ -28,13 +31,14 @@ class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
 
   test("distributed training with the specified worker number") {
     val trainingRDD = sc.parallelize(Classification.train)
+    val buildTrainingRDD = PreXGBoost.buildRDDLabeledPointToRDDWatches(trainingRDD)
     val (booster, metrics) = XGBoost.trainDistributed(
-      trainingRDD,
+      sc,
+      buildTrainingRDD,
       List("eta" -> "1", "max_depth" -> "6",
         "objective" -> "binary:logistic", "num_round" -> 5, "num_workers" -> numWorkers,
         "custom_eval" -> null, "custom_obj" -> null, "use_external_memory" -> false,
-        "missing" -> Float.NaN).toMap,
-      hasGroup = false)
+        "missing" -> Float.NaN).toMap)
     assert(booster != null)
   }
 
@@ -177,7 +181,7 @@ class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
     // test different splits to cover the corner cases.
     for (split <- 1 to 20) {
       val trainingRDD = sc.parallelize(Ranking.train, split)
-      val traingGroupsRDD = XGBoost.repartitionForTrainingGroup(trainingRDD, 4)
+      val traingGroupsRDD = PreXGBoost.repartitionForTrainingGroup(trainingRDD, 4)
       val trainingGroups: Array[Array[XGBLabeledPoint]] = traingGroupsRDD.collect()
       // check the the order of the groups with group id.
       // Ranking.train has 20 groups
@@ -199,18 +203,19 @@ class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
       // make one partition empty for testing
       it.filter(_ => TaskContext.getPartitionId() != 3)
     })
-    XGBoost.repartitionForTrainingGroup(trainingRDD, 4)
+    PreXGBoost.repartitionForTrainingGroup(trainingRDD, 4)
   }
 
   test("distributed training with group data") {
     val trainingRDD = sc.parallelize(Ranking.train, 5)
+    val buildTrainingRDD = PreXGBoost.buildRDDLabeledPointToRDDWatches(trainingRDD, hasGroup = true)
     val (booster, _) = XGBoost.trainDistributed(
-      trainingRDD,
+      sc,
+      buildTrainingRDD,
       List("eta" -> "1", "max_depth" -> "6",
         "objective" -> "rank:pairwise", "num_round" -> 5, "num_workers" -> numWorkers,
         "custom_eval" -> null, "custom_obj" -> null, "use_external_memory" -> false,
-        "missing" -> Float.NaN).toMap,
-      hasGroup = true)
+        "missing" -> Float.NaN).toMap)
 
     assert(booster != null)
   }
@@ -365,6 +370,19 @@ class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
     val df2 = model.transform(df1)
     df1.collect()
     df2.collect()
+  }
+
+  test("throw exception for empty partition in trainingset") {
+    val paramMap = Map("eta" -> "0.1", "max_depth" -> "6", "silent" -> "1",
+      "objective" -> "binary:logistic", "num_class" -> "2", "num_round" -> 5,
+      "num_workers" -> numWorkers, "tree_method" -> "auto", "allow_non_zero_for_missing" -> true)
+    // The Dmatrix will be empty
+    val trainingDF = buildDataFrame(Seq(XGBLabeledPoint(1.0f, 4,
+      Array(0, 1, 2, 3), Array(0, 1, 2, 3))))
+    val xgb = new XGBoostClassifier(paramMap)
+    intercept[SparkException] {
+      xgb.fit(trainingDF)
+    }
   }
 
 }

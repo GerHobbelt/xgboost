@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 #include <vector>
-#include "../../helpers.h"
-#include "../../../../src/tree/gpu_hist/row_partitioner.cuh"
+
+#include "../../../../src/common/categorical.h"
 #include "../../../../src/tree/gpu_hist/histogram.cuh"
+#include "../../../../src/tree/gpu_hist/row_partitioner.cuh"
+#include "../../categorical_helpers.h"
+#include "../../helpers.h"
 
 namespace xgboost {
 namespace tree {
@@ -14,7 +17,7 @@ void TestDeterministicHistogram(bool is_dense, int shm_size) {
 
   float sparsity = is_dense ? 0.0f : 0.5f;
   auto matrix = RandomDataGenerator(kRows, kCols, sparsity).GenerateDMatrix();
-  BatchParam batch_param{0, static_cast<int32_t>(kBins), 0};
+  BatchParam batch_param{0, static_cast<int32_t>(kBins)};
 
   for (auto const& batch : matrix->GetBatches<EllpackPage>(batch_param)) {
     auto* page = batch.Impl();
@@ -30,7 +33,7 @@ void TestDeterministicHistogram(bool is_dense, int shm_size) {
 
     FeatureGroups feature_groups(page->Cuts(), page->is_dense, shm_size,
                                  sizeof(Gradient));
-    
+
     auto rounding = CreateRoundingFactor<Gradient>(gpair.DeviceSpan());
     BuildGradientHistogram(page->GetDeviceAccessor(0),
                            feature_groups.DeviceAccessor(0), gpair.DeviceSpan(),
@@ -67,7 +70,7 @@ void TestDeterministicHistogram(bool is_dense, int shm_size) {
 
       // Use a single feature group to compute the baseline.
       FeatureGroups single_group(page->Cuts());
-      
+
       dh::device_vector<Gradient> baseline(num_bins);
       BuildGradientHistogram(page->GetDeviceAccessor(0),
                              single_group.DeviceAccessor(0),
@@ -95,6 +98,64 @@ TEST(Histogram, GPUDeterministic) {
       TestDeterministicHistogram<GradientPair>(is_dense, shm_size);
       TestDeterministicHistogram<GradientPairPrecise>(is_dense, shm_size);
     }
+  }
+}
+
+// Test 1 vs rest categorical histogram is equivalent to one hot encoded data.
+void TestGPUHistogramCategorical(size_t num_categories) {
+  size_t constexpr kRows = 340;
+  size_t constexpr kBins = 256;
+  auto x = GenerateRandomCategoricalSingleColumn(kRows, num_categories);
+  auto cat_m = GetDMatrixFromData(x, kRows, 1);
+  cat_m->Info().feature_types.HostVector().push_back(FeatureType::kCategorical);
+  BatchParam batch_param{0, static_cast<int32_t>(kBins)};
+  tree::RowPartitioner row_partitioner(0, kRows);
+  auto ridx = row_partitioner.GetRows(0);
+  dh::device_vector<GradientPairPrecise> cat_hist(num_categories);
+  auto gpair = GenerateRandomGradients(kRows, 0, 2);
+  gpair.SetDevice(0);
+  auto rounding = CreateRoundingFactor<GradientPairPrecise>(gpair.DeviceSpan());
+  /**
+   * Generate hist with cat data.
+   */
+  for (auto const &batch : cat_m->GetBatches<EllpackPage>(batch_param)) {
+    auto* page = batch.Impl();
+    FeatureGroups single_group(page->Cuts());
+    BuildGradientHistogram(page->GetDeviceAccessor(0),
+                           single_group.DeviceAccessor(0),
+                           gpair.DeviceSpan(), ridx, dh::ToSpan(cat_hist),
+                           rounding);
+  }
+
+  /**
+   * Generate hist with one hot encoded data.
+   */
+  auto x_encoded = OneHotEncodeFeature(x, num_categories);
+  auto encode_m = GetDMatrixFromData(x_encoded, kRows, num_categories);
+  dh::device_vector<GradientPairPrecise> encode_hist(2 * num_categories);
+  for (auto const &batch : encode_m->GetBatches<EllpackPage>(batch_param)) {
+    auto* page = batch.Impl();
+    FeatureGroups single_group(page->Cuts());
+    BuildGradientHistogram(page->GetDeviceAccessor(0),
+                           single_group.DeviceAccessor(0),
+                           gpair.DeviceSpan(), ridx, dh::ToSpan(encode_hist),
+                           rounding);
+  }
+
+  std::vector<GradientPairPrecise> h_cat_hist(cat_hist.size());
+  thrust::copy(cat_hist.begin(), cat_hist.end(), h_cat_hist.begin());
+  auto cat_sum = std::accumulate(h_cat_hist.begin(), h_cat_hist.end(), GradientPairPrecise{});
+
+  std::vector<GradientPairPrecise> h_encode_hist(encode_hist.size());
+  thrust::copy(encode_hist.begin(), encode_hist.end(), h_encode_hist.begin());
+  ValidateCategoricalHistogram(num_categories,
+                               common::Span<GradientPairPrecise>{h_encode_hist},
+                               common::Span<GradientPairPrecise>{h_cat_hist});
+}
+
+TEST(Histogram, GPUHistCategorical) {
+  for (size_t num_categories = 2; num_categories < 8; ++num_categories) {
+    TestGPUHistogramCategorical(num_categories);
   }
 }
 }  // namespace tree
