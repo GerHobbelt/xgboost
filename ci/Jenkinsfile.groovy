@@ -39,6 +39,8 @@ if (env.BRANCH_NAME != PUBLISHABLE_BRANCH_NAME) {
 MAKE_OPTS = "CI=1 XGB_VERSION=${XGB_VERSION} TARGET_NEXUS=${targetNexus} PY_VERSION=37 BUILD_TAG=${BUILD_TAG}"
 
 CONFIGURATIONS = [
+    [backend: 'minimal', os: 'osx', node: 'osx'],
+
     [backend: 'minimal', os: 'linux', hasImage: true],
     [backend: 'ompv4', os: 'linux', hasImage: true],
     [backend: 'gpuv4', os: 'linux', hasImage: true],
@@ -49,6 +51,9 @@ Map CHECK_IMAGES = [
         [ name: 'Check MINIMAL with CentOS 7.3', os: 'centos7.3', hasImage: true ],
         [ name: 'Check MINIMAL with Ubuntu 16', os: 'ubuntu16', hasImage: true ],
         [ name: 'Check MINIMAL with Ubuntu 18', os: 'ubuntu18', hasImage: true ]
+    ],
+    osx_minimal: [
+        [name: 'Check MINIMAL with OS X', node: 'osx', os: 'osx'],
     ],
     linux_ompv4: [
         [name: 'Check OMP with CentOS 7.3', os: 'centos7.3', hasImage: true],
