@@ -14,7 +14,8 @@ TARGET_NEXUS_SNAPSHOT = 'snapshot'
 TARGET_NEXUS_PUBLIC = 'public'
 properties([
     parameters([
-        choice(name: 'targetNexus', choices: [TARGET_NEXUS_NONE, TARGET_NEXUS_LOCAL, TARGET_NEXUS_PUBLIC], description: 'Nexus to upload artifacts to.')
+        choice(name: 'targetNexus', choices: [TARGET_NEXUS_NONE, TARGET_NEXUS_LOCAL, TARGET_NEXUS_PUBLIC], description: 'Nexus to upload artifacts to.'),
+        booleanParam(name: 'releaseGithub', defaultValue: true, description: 'Should public release also go to github release page')
     ])
 ])
 
@@ -26,6 +27,7 @@ XGB_MAJOR_VERSION = '1.6.1'
 XGB_VERSION = "${XGB_MAJOR_VERSION}.${currentBuild.number}"
 BUILD_TAG=1
 
+def releaseGithub = params.releaseGithub
 def targetNexus = params.targetNexus ?: TARGET_NEXUS_NONE
 targetNexus = targetNexus.toLowerCase()
 env.SAFE_BRANCH_NAME = env.BRANCH_NAME.replaceAll('/|\\ ', '-').toLowerCase()
@@ -175,7 +177,7 @@ ansiColor('xterm') {
                                 }
                             }
                         }
-                        if (targetNexus == TARGET_NEXUS_PUBLIC) {
+                        if (targetNexus == TARGET_NEXUS_PUBLIC && releaseGithub) {
                             docker.withRegistry("https://harbor.h2o.ai") {
                                 docker.image('harbor.h2o.ai/opsh2oai/hub').inside("--init -v /home/jenkins/.ssh:/home/jenkins/.ssh:ro -v /home/jenkins/.gitconfig:/home/jenkins/.gitconfig:ro") {
                                     buildSummary.stageWithSummary("GitHub Release") {
