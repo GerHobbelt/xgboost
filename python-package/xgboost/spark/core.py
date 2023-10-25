@@ -1,4 +1,4 @@
-"""Xgboost pyspark integration submodule for core code."""
+"""XGBoost pyspark integration submodule for core code."""
 import base64
 
 # pylint: disable=fixme, too-many-ancestors, protected-access, no-member, invalid-name
@@ -61,7 +61,7 @@ import xgboost
 from xgboost import XGBClassifier
 from xgboost.compat import is_cudf_available
 from xgboost.core import Booster
-from xgboost.sklearn import DEFAULT_N_ESTIMATORS, XGBModel
+from xgboost.sklearn import DEFAULT_N_ESTIMATORS, XGBModel, _can_use_qdm
 from xgboost.training import train as worker_train
 
 from .data import (
@@ -133,6 +133,7 @@ _inverse_pyspark_param_alias_map = {v: k for k, v in _pyspark_param_alias_map.it
 
 _unsupported_xgb_params = [
     "gpu_id",  # we have "use_gpu" pyspark param instead.
+    "device",  # we have "use_gpu" pyspark param instead.
     "enable_categorical",  # Use feature_types param to specify categorical feature instead
     "use_label_encoder",
     "n_jobs",  # Do not allow user to set it, will use `spark.task.cpus` value instead.
@@ -899,19 +900,19 @@ class _SparkXGBEstimator(Estimator, _SparkXGBParams, MLReadable, MLWritable):
 
             context = BarrierTaskContext.get()
 
-            gpu_id = None
-            use_hist = booster_params.get("tree_method", None) in ("hist", "gpu_hist")
+            dev_ordinal = None
+            use_qdm = _can_use_qdm(booster_params.get("tree_method", None))
 
             if use_gpu:
-                gpu_id = context.partitionId() if is_local else _get_gpu_id(context)
-                booster_params["gpu_id"] = gpu_id
+                dev_ordinal = (
+                    context.partitionId() if is_local else _get_gpu_id(context)
+                )
+                booster_params["device"] = "cuda:" + str(dev_ordinal)
                 # If cuDF is not installed, then using DMatrix instead of QDM,
                 # because without cuDF, DMatrix performs better than QDM.
                 # Note: Checking `is_cudf_available` in spark worker side because
                 # spark worker might has different python environment with driver side.
-                use_qdm = use_hist and is_cudf_available()
-            else:
-                use_qdm = use_hist
+                use_qdm = use_qdm and is_cudf_available()
 
             if use_qdm and (booster_params.get("max_bin", None) is not None):
                 dmatrix_kwargs["max_bin"] = booster_params["max_bin"]
@@ -945,7 +946,7 @@ class _SparkXGBEstimator(Estimator, _SparkXGBParams, MLReadable, MLWritable):
                 dtrain, dvalid = create_dmatrix_from_partitions(
                     pandas_df_iter,
                     feature_prop.features_cols_names,
-                    gpu_id,
+                    dev_ordinal,
                     use_qdm,
                     dmatrix_kwargs,
                     enable_sparse_data_optim=feature_prop.enable_sparse_data_optim,
