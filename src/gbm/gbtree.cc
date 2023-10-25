@@ -340,7 +340,7 @@ void GBTree::InitUpdater(Args const& cfg) {
   // create new updaters
   for (const std::string& pstr : ups) {
     std::unique_ptr<TreeUpdater> up(
-        TreeUpdater::Create(pstr.c_str(), ctx_, model_.learner_model_param->task));
+        TreeUpdater::Create(pstr.c_str(), ctx_, &model_.learner_model_param->task));
     up->Configure(cfg);
     updaters_.push_back(std::move(up));
   }
@@ -360,8 +360,8 @@ void GBTree::BoostNewTrees(HostDeviceVector<GradientPair>* gpair, DMatrix* p_fma
           << "Set `process_type` to `update` if you want to update existing "
              "trees.";
       // create new tree
-      std::unique_ptr<RegTree> ptr(new RegTree());
-      ptr->param.UpdateAllowUnknown(this->cfg_);
+      std::unique_ptr<RegTree> ptr(new RegTree{this->model_.learner_model_param->LeafLength(),
+                                               this->model_.learner_model_param->num_feature});
       new_trees.push_back(ptr.get());
       ret->push_back(std::move(ptr));
     } else if (tparam_.process_type == TreeProcessType::kUpdate) {
@@ -448,7 +448,7 @@ void GBTree::LoadConfig(Json const& in) {
       LOG(WARNING) << "Changing updater from `grow_gpu_hist` to `grow_quantile_histmaker`.";
     }
     std::unique_ptr<TreeUpdater> up{
-        TreeUpdater::Create(name, ctx_, model_.learner_model_param->task)};
+        TreeUpdater::Create(name, ctx_, &model_.learner_model_param->task)};
     up->LoadConfig(kv.second);
     updaters_.push_back(std::move(up));
   }

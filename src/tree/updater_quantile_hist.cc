@@ -35,7 +35,7 @@ void QuantileHistMaker::Update(TrainParam const *param, HostDeviceVector<Gradien
   // build tree
   const size_t n_trees = trees.size();
   if (!pimpl_) {
-    pimpl_.reset(new Builder(n_trees, param, dmat, task_, ctx_));
+    pimpl_.reset(new Builder(n_trees, param, dmat, *task_, ctx_));
   }
 
   size_t t_idx{0};
@@ -57,7 +57,7 @@ bool QuantileHistMaker::UpdatePredictionCache(const DMatrix *data,
 
 CPUExpandEntry QuantileHistMaker::Builder::InitRoot(
     DMatrix *p_fmat, RegTree *p_tree, const std::vector<GradientPair> &gpair_h) {
-  CPUExpandEntry node(RegTree::kRoot, p_tree->GetDepth(0), 0.0f);
+  CPUExpandEntry node(RegTree::kRoot, p_tree->GetDepth(0));
 
   size_t page_id = 0;
   auto space = ConstructHistSpace(partitioner_, {node});
@@ -197,8 +197,8 @@ void QuantileHistMaker::Builder::ExpandTree(DMatrix *p_fmat, RegTree *p_tree,
       for (auto const &candidate : valid_candidates) {
         int left_child_nidx = tree[candidate.nid].LeftChild();
         int right_child_nidx = tree[candidate.nid].RightChild();
-        CPUExpandEntry l_best{left_child_nidx, depth, 0.0};
-        CPUExpandEntry r_best{right_child_nidx, depth, 0.0};
+        CPUExpandEntry l_best{left_child_nidx, depth};
+        CPUExpandEntry r_best{right_child_nidx, depth};
         best_splits.push_back(l_best);
         best_splits.push_back(r_best);
       }
@@ -287,6 +287,8 @@ void QuantileHistMaker::Builder::InitData(DMatrix *fmat, const RegTree &tree,
 
 XGBOOST_REGISTER_TREE_UPDATER(QuantileHistMaker, "grow_quantile_histmaker")
     .describe("Grow tree using quantized histogram.")
-    .set_body([](Context const *ctx, ObjInfo task) { return new QuantileHistMaker(ctx, task); });
+    .set_body([](Context const *ctx, ObjInfo const *task) {
+      return new QuantileHistMaker(ctx, task);
+    });
 }  // namespace tree
 }  // namespace xgboost

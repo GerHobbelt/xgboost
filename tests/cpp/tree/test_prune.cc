@@ -32,15 +32,14 @@ TEST(Updater, Prune) {
   auto ctx = CreateEmptyGenericParam(GPUIDX);
 
   // prepare tree
-  RegTree tree = RegTree();
-  tree.param.UpdateAllowUnknown(cfg);
+  RegTree tree = RegTree{1u, kCols};
   std::vector<RegTree*> trees {&tree};
   // prepare pruner
   TrainParam param;
   param.UpdateAllowUnknown(cfg);
 
-  std::unique_ptr<TreeUpdater> pruner(
-      TreeUpdater::Create("prune", &ctx, ObjInfo{ObjInfo::kRegression}));
+  ObjInfo task{ObjInfo::kRegression};
+  std::unique_ptr<TreeUpdater> pruner(TreeUpdater::Create("prune", &ctx, &task));
 
   // loss_chg < min_split_loss;
   std::vector<HostDeviceVector<bst_node_t>> position(trees.size());

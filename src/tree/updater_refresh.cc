@@ -50,11 +50,11 @@ class TreeRefresher : public TreeUpdater {
         int tid = omp_get_thread_num();
         int num_nodes = 0;
         for (auto tree : trees) {
-          num_nodes += tree->param.num_nodes;
+          num_nodes += tree->NumNodes();
         }
         stemp[tid].resize(num_nodes, GradStats());
         std::fill(stemp[tid].begin(), stemp[tid].end(), GradStats());
-        fvec_temp[tid].Init(trees[0]->param.num_feature);
+        fvec_temp[tid].Init(trees[0]->NumFeatures());
       });
     }
     exc.Rethrow();
@@ -77,7 +77,7 @@ class TreeRefresher : public TreeUpdater {
           for (auto tree : trees) {
             AddStats(*tree, feats, gpair_h, info, ridx,
                      dmlc::BeginPtr(stemp[tid]) + offset);
-            offset += tree->param.num_nodes;
+            offset += tree->NumNodes();
           }
           feats.Drop(inst);
         });
@@ -96,7 +96,7 @@ class TreeRefresher : public TreeUpdater {
     int offset = 0;
     for (auto tree : trees) {
       this->Refresh(param, dmlc::BeginPtr(stemp[0]) + offset, 0, tree);
-      offset += tree->param.num_nodes;
+      offset += tree->NumNodes();
     }
   }
 
@@ -142,5 +142,5 @@ class TreeRefresher : public TreeUpdater {
 
 XGBOOST_REGISTER_TREE_UPDATER(TreeRefresher, "refresh")
     .describe("Refresher that refreshes the weight and statistics according to data.")
-    .set_body([](Context const *ctx, ObjInfo) { return new TreeRefresher(ctx); });
+    .set_body([](Context const *ctx, auto) { return new TreeRefresher(ctx); });
 }  // namespace xgboost::tree
