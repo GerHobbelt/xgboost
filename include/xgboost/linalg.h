@@ -16,12 +16,17 @@
 #include <algorithm>
 #include <cassert>
 #include <cinttypes>  // std::int32_t
+#include <cstddef>    // std::size_t
 #include <limits>
 #include <string>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif  // defined(_MSC_VER)
 
 // decouple it from xgboost.
 #ifndef LINALG_HD
@@ -146,7 +151,7 @@ inline LINALG_HD int Popc(uint64_t v) {
   return __popcll(v);
 #elif defined(__GNUC__) || defined(__clang__)
   return __builtin_popcountll(v);
-#elif defined(_MSC_VER)
+#elif defined(_MSC_VER) && _defined(_M_X64)
   return __popcnt64(v);
 #else
   return NativePopc(v);
@@ -546,6 +551,11 @@ LINALG_HD auto UnravelIndex(size_t idx, common::Span<size_t const, D> shape) {
   } else {
     return detail::UnravelImpl<uint32_t, D>(static_cast<uint32_t>(idx), shape);
   }
+}
+
+template <size_t D>
+LINALG_HD auto UnravelIndex(size_t idx, std::size_t const (&shape)[D]) {
+  return UnravelIndex(idx, common::Span<std::size_t const, D>(shape));
 }
 
 /**
