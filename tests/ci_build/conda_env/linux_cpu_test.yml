@@ -1,8 +1,12 @@
-name: cpu_test
+name: linux_cpu_test
 channels:
 - conda-forge
 dependencies:
 - python=3.8
+- cmake
+- c-compiler
+- cxx-compiler
+- ninja
 - pip
 - wheel
 - pyyaml
@@ -33,9 +37,10 @@ dependencies:
 - pyarrow
 - protobuf
 - cloudpickle
-- shap
+- shap>=0.41
 - modin
+# TODO: Replace it with pyspark>=3.4 once 3.4 released.
+# - https://ml-team-public-read.s3.us-west-2.amazonaws.com/pyspark-3.4.0.dev0.tar.gz
+- pyspark>=3.3.1
 - pip:
   - datatable
-  # TODO: Replace it with pyspark>=3.4 once 3.4 released.
-  - https://ml-team-public-read.s3.us-west-2.amazonaws.com/pyspark-3.4.0.dev0.tar.gz
