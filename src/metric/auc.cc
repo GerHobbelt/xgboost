@@ -116,8 +116,10 @@ double MultiClassOVR(Context const *ctx, common::Span<float const> predts, MetaI
 
   // we have 2 averages going in here, first is among workers, second is among
   // classes. allreduce sums up fp/tp auc for each class.
-  collective::Allreduce<collective::Operation::kSum>(results.Values().data(),
-                                                     results.Values().size());
+  if (info.IsRowSplit()) {
+    collective::Allreduce<collective::Operation::kSum>(results.Values().data(),
+                                                       results.Values().size());
+  }
   double auc_sum{0};
   double tp_sum{0};
   for (size_t c = 0; c < n_classes; ++c) {
@@ -268,7 +270,9 @@ class EvalAUC : public MetricNoCache {
     }
     //  We use the global size to handle empty dataset.
     std::array<size_t, 2> meta{info.labels.Size(), preds.Size()};
-    collective::Allreduce<collective::Operation::kMax>(meta.data(), meta.size());
+    if (!info.IsVerticalFederated()) {
+      collective::Allreduce<collective::Operation::kMax>(meta.data(), meta.size());
+    }
     if (meta[0] == 0) {
       // Empty across all workers, which is not supported.
       auc = std::numeric_limits<double>::quiet_NaN();
@@ -290,7 +294,9 @@ class EvalAUC : public MetricNoCache {
       }
 
       std::array<double, 2> results{auc, static_cast<double>(valid_groups)};
-      collective::Allreduce<collective::Operation::kSum>(results.data(), results.size());
+      if (info.IsRowSplit()) {
+        collective::Allreduce<collective::Operation::kSum>(results.data(), results.size());
+      }
       auc = results[0];
       valid_groups = static_cast<uint32_t>(results[1]);
 
@@ -319,7 +325,9 @@ class EvalAUC : public MetricNoCache {
       }
       double local_area = fp * tp;
       std::array<double, 2> result{auc, local_area};
-      collective::Allreduce<collective::Operation::kSum>(result.data(), result.size());
+      if (info.IsRowSplit()) {
+        collective::Allreduce<collective::Operation::kSum>(result.data(), result.size());
+      }
       std::tie(auc, local_area) = common::UnpackArr(std::move(result));
       if (local_area <= 0) {
         // the dataset across all workers have only positive or negative sample
