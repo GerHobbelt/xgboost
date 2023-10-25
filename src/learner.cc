@@ -45,7 +45,7 @@
 #include "common/timer.h"                 // for Monitor
 #include "common/version.h"               // for Version
 #include "dmlc/endian.h"                  // for ByteSwap, DMLC_IO_NO_ENDIAN_SWAP
-#include "xgboost/base.h"                 // for Args, bst_float, GradientPair, bst_feature_t
+#include "xgboost/base.h"                 // for Args, bst_float, GradientPair, bst_feature_t, ...
 #include "xgboost/context.h"              // for Context
 #include "xgboost/data.h"                 // for DMatrix, MetaInfo
 #include "xgboost/gbm.h"                  // for GradientBooster
@@ -860,9 +860,9 @@ class LearnerConfiguration : public Learner {
 
   void InitEstimation(MetaInfo const& info, linalg::Tensor<float, 1>* base_score) {
     // Special handling for vertical federated learning.
-    if (collective::IsFederated() && info.data_split_mode == DataSplitMode::kCol) {
+    if (info.IsVerticalFederated()) {
       // We assume labels are only available on worker 0, so the estimation is calculated there
-      // and added to other workers.
+      // and broadcast to other workers.
       if (collective::GetRank() == 0) {
         UsePtr(obj_)->InitEstimation(info, base_score);
         collective::Broadcast(base_score->Data()->HostPointer(),
@@ -882,7 +882,6 @@ std::string const LearnerConfiguration::kEvalMetric {"eval_metric"};  // NOLINT
 
 class LearnerIO : public LearnerConfiguration {
  private:
-  std::set<std::string> saved_configs_ = {"num_round"};
   // Used to identify the offset of JSON string when
   // Will be removed once JSON takes over.  Right now we still loads some RDS files from R.
   std::string const serialisation_header_ { u8"CONFIG-offset:" };
@@ -1035,21 +1034,11 @@ class LearnerIO : public LearnerConfiguration {
     CHECK(fi->Read(&tparam_.booster)) << "BoostLearner: wrong model format";
 
     obj_.reset(ObjFunction::Create(tparam_.objective, &ctx_));
-    gbm_.reset(GradientBooster::Create(tparam_.booster, &ctx_,
-                                       &learner_model_param_));
+    gbm_.reset(GradientBooster::Create(tparam_.booster, &ctx_, &learner_model_param_));
     gbm_->Load(fi);
     if (mparam_.contain_extra_attrs != 0) {
       std::vector<std::pair<std::string, std::string> > attr;
       fi->Read(&attr);
-      for (auto& kv : attr) {
-        const std::string prefix = "SAVED_PARAM_";
-        if (kv.first.find(prefix) == 0) {
-          const std::string saved_param = kv.first.substr(prefix.length());
-          if (saved_configs_.find(saved_param) != saved_configs_.end()) {
-            cfg_[saved_param] = kv.second;
-          }
-        }
-      }
       attributes_ = std::map<std::string, std::string>(attr.begin(), attr.end());
     }
     bool warn_old_model { false };
@@ -1132,16 +1121,6 @@ class LearnerIO : public LearnerConfiguration {
     std::vector<std::pair<std::string, std::string> > extra_attr;
     mparam.contain_extra_attrs = 1;
 
-    {
-      std::vector<std::string> saved_params;
-      for (const auto& key : saved_params) {
-        auto it = cfg_.find(key);
-        if (it != cfg_.end()) {
-          mparam.contain_extra_attrs = 1;
-          extra_attr.emplace_back("SAVED_PARAM_" + key, it->second);
-        }
-      }
-    }
     {
       // Similar to JSON model IO, we save the objective.
       Json j_obj { Object() };
@@ -1268,19 +1247,19 @@ class LearnerImpl : public LearnerIO {
     return gbm_->DumpModel(fmap, with_stats, format);
   }
 
-  Learner* Slice(int32_t begin_layer, int32_t end_layer, int32_t step,
+  Learner* Slice(bst_layer_t begin, bst_layer_t end, bst_layer_t step,
                  bool* out_of_bound) override {
     this->Configure();
     this->CheckModelInitialized();
 
     CHECK_NE(this->learner_model_param_.num_feature, 0);
-    CHECK_GE(begin_layer, 0);
+    CHECK_GE(begin, 0);
     auto* out_impl = new LearnerImpl({});
     out_impl->learner_model_param_.Copy(this->learner_model_param_);
     out_impl->ctx_ = this->ctx_;
     auto gbm = std::unique_ptr<GradientBooster>(GradientBooster::Create(
         this->tparam_.booster, &out_impl->ctx_, &out_impl->learner_model_param_));
-    this->gbm_->Slice(begin_layer, end_layer, step, gbm.get(), out_of_bound);
+    this->gbm_->Slice(begin, end, step, gbm.get(), out_of_bound);
     out_impl->gbm_ = std::move(gbm);
 
     Json config{Object()};
@@ -1508,7 +1487,7 @@ class LearnerImpl : public LearnerIO {
   void GetGradient(HostDeviceVector<bst_float> const& preds, MetaInfo const& info, int iteration,
                    HostDeviceVector<GradientPair>* out_gpair) {
     // Special handling for vertical federated learning.
-    if (collective::IsFederated() && info.data_split_mode == DataSplitMode::kCol) {
+    if (info.IsVerticalFederated()) {
       // We assume labels are only available on worker 0, so the gradients are calculated there
       // and broadcast to other workers.
       if (collective::GetRank() == 0) {
