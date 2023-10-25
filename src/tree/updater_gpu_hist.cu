@@ -20,6 +20,7 @@
 #include "../common/io.h"
 #include "../common/timer.h"
 #include "../data/ellpack_page.cuh"
+#include "../common/cuda_context.cuh"  // CUDAContext
 #include "constraints.cuh"
 #include "driver.h"
 #include "gpu_hist/evaluate_splits.cuh"
@@ -344,9 +345,9 @@ struct GPUHistMakerDevice {
   void BuildHist(int nidx) {
     auto d_node_hist = hist.GetNodeHistogram(nidx);
     auto d_ridx = row_partitioner->GetRows(nidx);
-    BuildGradientHistogram(page->GetDeviceAccessor(ctx_->gpu_id),
-                           feature_groups->DeviceAccessor(ctx_->gpu_id), gpair,
-                           d_ridx, d_node_hist, *quantiser);
+    BuildGradientHistogram(ctx_->CUDACtx(), page->GetDeviceAccessor(ctx_->gpu_id),
+                           feature_groups->DeviceAccessor(ctx_->gpu_id), gpair, d_ridx, d_node_hist,
+                           *quantiser);
   }
 
   // Attempt to do subtraction trick
@@ -402,8 +403,7 @@ struct GPUHistMakerDevice {
             go_left = data.split_node.DefaultLeft();
           } else {
             if (data.split_type == FeatureType::kCategorical) {
-              go_left = common::Decision<false>(data.node_cats.Bits(), cut_value,
-                                                data.split_node.DefaultLeft());
+              go_left = common::Decision(data.node_cats.Bits(), cut_value);
             } else {
               go_left = cut_value <= data.split_node.SplitCond();
             }
@@ -480,7 +480,7 @@ struct GPUHistMakerDevice {
           if (common::IsCat(d_feature_types, position)) {
             auto node_cats = categories.subspan(categories_segments[position].beg,
                                                 categories_segments[position].size);
-            go_left = common::Decision<false>(node_cats, element, node.DefaultLeft());
+            go_left = common::Decision(node_cats, element);
           } else {
             go_left = element <= node.SplitCond();
           }
@@ -647,7 +647,7 @@ struct GPUHistMakerDevice {
           return quantiser.ToFixedPoint(gpair);
         });
     GradientPairInt64 root_sum_quantised =
-        dh::Reduce(thrust::cuda::par(alloc), gpair_it, gpair_it + gpair.size(),
+        dh::Reduce(ctx_->CUDACtx()->CTP(), gpair_it, gpair_it + gpair.size(),
                    GradientPairInt64{}, thrust::plus<GradientPairInt64>{});
     using ReduceT = typename decltype(root_sum_quantised)::ValueT;
     collective::Allreduce<collective::Operation::kSum>(
