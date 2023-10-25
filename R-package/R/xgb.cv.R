@@ -202,7 +202,12 @@ xgb.cv <- function(params = list(), data, nrounds, nfold, label = NULL, missing 
        dtrain <- slice(dall, unlist(folds[-k]))
     else
        dtrain <- slice(dall, train_folds[[k]])
-    handle <- xgb.Booster.handle(params, list(dtrain, dtest))
+    handle <- xgb.Booster.handle(
+      params = params,
+      cachelist = list(dtrain, dtest),
+      modelfile = NULL,
+      handle = NULL
+    )
     list(dtrain = dtrain, bst = handle, watchlist = list(train = dtrain, test = dtest), index = folds[[k]])
   })
   rm(dall)
@@ -223,8 +228,18 @@ xgb.cv <- function(params = list(), data, nrounds, nfold, label = NULL, missing 
     for (f in cb$pre_iter) f()
 
     msg <- lapply(bst_folds, function(fd) {
-      xgb.iter.update(fd$bst, fd$dtrain, iteration - 1, obj)
-      xgb.iter.eval(fd$bst, fd$watchlist, iteration - 1, feval)
+      xgb.iter.update(
+        booster_handle = fd$bst,
+        dtrain = fd$dtrain,
+        iter = iteration - 1,
+        obj = obj
+      )
+      xgb.iter.eval(
+        booster_handle = fd$bst,
+        watchlist = fd$watchlist,
+        iter = iteration - 1,
+        feval = feval
+      )
     })
     msg <- simplify2array(msg)
     bst_evaluation <- rowMeans(msg)
