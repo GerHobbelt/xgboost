@@ -20,16 +20,15 @@ namespace xgboost {
 
 namespace {
 void TestBasic(DMatrix* dmat) {
-  auto lparam = CreateEmptyGenericParam(GPUIDX);
+  Context ctx;
   std::unique_ptr<Predictor> cpu_predictor =
-      std::unique_ptr<Predictor>(Predictor::Create("cpu_predictor", &lparam));
+      std::unique_ptr<Predictor>(Predictor::Create("cpu_predictor", &ctx));
 
   size_t const kRows = dmat->Info().num_row_;
   size_t const kCols = dmat->Info().num_col_;
 
   LearnerModelParam mparam{MakeMP(kCols, .0, 1)};
 
-  Context ctx;
   ctx.UpdateAllowUnknown(Args{});
   gbm::GBTreeModel model = CreateTestModel(&mparam, &ctx);
 
@@ -117,13 +116,17 @@ void TestColumnSplit() {
 }
 }  // anonymous namespace
 
-TEST(CpuPredictor, ColumnSplitBasic) {
+TEST(CpuPredictor, BasicColumnSplit) {
   auto constexpr kWorldSize = 2;
   RunWithInMemoryCommunicator(kWorldSize, TestColumnSplit);
 }
 
 TEST(CpuPredictor, IterationRange) {
   TestIterationRange("cpu_predictor");
+}
+
+TEST(CpuPredictor, IterationRangeColmnSplit) {
+  TestIterationRangeColumnSplit("cpu_predictor");
 }
 
 TEST(CpuPredictor, ExternalMemory) {
@@ -223,8 +226,16 @@ TEST(CPUPredictor, CategoricalPrediction) {
   TestCategoricalPrediction("cpu_predictor");
 }
 
+TEST(CPUPredictor, CategoricalPredictionColumnSplit) {
+  TestCategoricalPredictionColumnSplit("cpu_predictor");
+}
+
 TEST(CPUPredictor, CategoricalPredictLeaf) {
   TestCategoricalPredictLeaf(StringView{"cpu_predictor"});
+}
+
+TEST(CPUPredictor, CategoricalPredictLeafColumnSplit) {
+  TestCategoricalPredictLeafColumnSplit(StringView{"cpu_predictor"});
 }
 
 TEST(CpuPredictor, UpdatePredictionCache) {
@@ -236,9 +247,18 @@ TEST(CpuPredictor, LesserFeatures) {
   TestPredictionWithLesserFeatures("cpu_predictor");
 }
 
+TEST(CpuPredictor, LesserFeaturesColumnSplit) {
+  TestPredictionWithLesserFeaturesColumnSplit("cpu_predictor");
+}
+
 TEST(CpuPredictor, Sparse) {
   TestSparsePrediction(0.2, "cpu_predictor");
   TestSparsePrediction(0.8, "cpu_predictor");
+}
+
+TEST(CpuPredictor, SparseColumnSplit) {
+  TestSparsePredictionColumnSplit(0.2, "cpu_predictor");
+  TestSparsePredictionColumnSplit(0.8, "cpu_predictor");
 }
 
 TEST(CpuPredictor, Multi) {
