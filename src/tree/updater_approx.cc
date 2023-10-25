@@ -71,7 +71,7 @@ class GloablApproxBuilder {
       } else {
         CHECK_EQ(n_total_bins, page.cut.TotalBins());
       }
-      partitioner_.emplace_back(this->ctx_, page.Size(), page.base_rowid);
+      partitioner_.emplace_back(this->ctx_, page.Size(), page.base_rowid, p_fmat->IsColumnSplit());
       n_batches_++;
     }
 
@@ -90,7 +90,9 @@ class GloablApproxBuilder {
     for (auto const &g : gpair) {
       root_sum.Add(g);
     }
-    collective::Allreduce<collective::Operation::kSum>(reinterpret_cast<double *>(&root_sum), 2);
+    if (p_fmat->IsRowSplit()) {
+      collective::Allreduce<collective::Operation::kSum>(reinterpret_cast<double *>(&root_sum), 2);
+    }
     std::vector<CPUExpandEntry> nodes{best};
     size_t i = 0;
     auto space = ConstructHistSpace(partitioner_, nodes);
