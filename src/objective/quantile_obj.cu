@@ -1,6 +1,7 @@
 /**
  * Copyright 2023 by XGBoost contributors
  */
+#include <array>                            // std::array
 #include <cstddef>                          // std::size_t
 #include <cstdint>                          // std::int32_t
 #include <vector>                           // std::vector
@@ -35,7 +36,7 @@ class QuantileRegression : public ObjFunction {
   bst_target_t Targets(MetaInfo const& info) const override {
     auto const& alpha = param_.quantile_alpha.Get();
     CHECK_EQ(alpha.size(), alpha_.Size()) << "The objective is not yet configured.";
-    if (!info.IsVerticalFederated() || collective::GetRank() == 0) {
+    if (info.ShouldHaveLabels()) {
       CHECK_EQ(info.labels.Shape(1), 1)
           << "Multi-target is not yet supported by the quantile loss.";
     }
@@ -170,10 +171,9 @@ class QuantileRegression : public ObjFunction {
     common::Mean(ctx_, *base_score, &temp);
     double meanq = temp(0) * sw;
 
-    if (info.IsRowSplit()) {
-      collective::Allreduce<collective::Operation::kSum>(&meanq, 1);
-      collective::Allreduce<collective::Operation::kSum>(&sw, 1);
-    }
+    std::array<double, 2> dat{meanq, sw};
+    collective::GlobalSum(info, &dat);
+    std::tie(meanq, sw) = std::tuple_cat(dat);
     meanq /= (sw + kRtEps);
     base_score->Reshape(1);
     base_score->Data()->Fill(meanq);
