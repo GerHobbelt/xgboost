@@ -23,7 +23,11 @@ class LintersPaths:
         "tests/python/test_predict.py",
         "tests/python/test_quantile_dmatrix.py",
         "tests/python/test_tree_regularization.py",
+        "tests/python/test_shap.py",
         "tests/python-gpu/test_gpu_data_iterator.py",
+        "tests/python-gpu/test_gpu_prediction.py",
+        "tests/python-gpu/load_pickle.py",
+        "tests/python-gpu/test_gpu_pickling.py",
         "tests/test_distributed/test_with_spark/",
         "tests/test_distributed/test_gpu_with_spark/",
         # demo
@@ -37,6 +41,7 @@ class LintersPaths:
         "demo/guide-python/quantile_regression.py",
         "demo/guide-python/multioutput_regression.py",
         "demo/guide-python/learning_to_rank.py",
+        "demo/aft_survival/aft_survival_viz_demo.py",
         # CI
         "tests/ci_build/lint_python.py",
         "tests/ci_build/test_r_package.py",
@@ -66,6 +71,7 @@ class LintersPaths:
         "tests/python/test_dt.py",
         "tests/python/test_data_iterator.py",
         "tests/python-gpu/test_gpu_data_iterator.py",
+        "tests/python-gpu/load_pickle.py",
         "tests/test_distributed/test_with_spark/test_data.py",
         "tests/test_distributed/test_gpu_with_spark/test_data.py",
         "tests/test_distributed/test_gpu_with_dask/test_gpu_with_dask.py",
@@ -78,6 +84,7 @@ class LintersPaths:
         "demo/guide-python/quantile_regression.py",
         "demo/guide-python/multioutput_regression.py",
         "demo/guide-python/learning_to_rank.py",
+        "demo/aft_survival/aft_survival_viz_demo.py",
         # CI
         "tests/ci_build/lint_python.py",
         "tests/ci_build/test_r_package.py",
@@ -114,7 +121,13 @@ def run_black(rel_path: str, fix: bool) -> bool:
 @cd(PY_PACKAGE)
 def run_isort(rel_path: str, fix: bool) -> bool:
     # Isort gets confused when trying to find the config file, so specified explicitly.
-    cmd = ["isort", "--settings-path", PY_PACKAGE, os.path.join(ROOT, rel_path)]
+    cmd = [
+        "isort",
+        "--settings-path",
+        PY_PACKAGE,
+        f"--src={PY_PACKAGE}",
+        os.path.join(ROOT, rel_path),
+    ]
     if not fix:
         cmd += ["--check"]
 

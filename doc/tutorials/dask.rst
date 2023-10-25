@@ -54,6 +54,9 @@ on a dask cluster:
         y = da.random.random(size=(num_obs, 1), chunks=(1000, 1))
 
         dtrain = xgb.dask.DaskDMatrix(client, X, y)
+        # or
+        # dtrain = xgb.dask.DaskQuantileDMatrix(client, X, y)
+        # `DaskQuantileDMatrix` is available for the `hist` and `gpu_hist` tree method.
 
         output = xgb.dask.train(
             client,
@@ -145,8 +148,8 @@ Also for inplace prediction:
 
 .. code-block:: python
 
-  booster.set_param({'predictor': 'gpu_predictor'})
-  # where X is a dask DataFrame or dask Array containing cupy or cuDF backed data.
+  # where X is a dask DataFrame or dask Array backed by cupy or cuDF.
+  booster.set_param({"gpu_id": "0"})
   prediction = xgb.dask.inplace_predict(client, booster, X)
 
 When input is ``da.Array`` object, output is always ``da.Array``.  However, if the input

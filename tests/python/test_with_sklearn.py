@@ -475,18 +475,22 @@ def test_rf_regression():
     run_housing_rf_regression("hist")
 
 
-def test_parameter_tuning():
+@pytest.mark.parametrize("tree_method", ["exact", "hist", "approx"])
+def test_parameter_tuning(tree_method: str) -> None:
     from sklearn.datasets import fetch_california_housing
     from sklearn.model_selection import GridSearchCV
 
     X, y = fetch_california_housing(return_X_y=True)
-    xgb_model = xgb.XGBRegressor(learning_rate=0.1)
-    clf = GridSearchCV(xgb_model, {'max_depth': [2, 4],
-                                   'n_estimators': [50, 200]},
-                       cv=2, verbose=1)
-    clf.fit(X, y)
-    assert clf.best_score_ < 0.7
-    assert clf.best_params_ == {'n_estimators': 200, 'max_depth': 4}
+    reg = xgb.XGBRegressor(learning_rate=0.1, tree_method=tree_method)
+    grid_cv = GridSearchCV(
+        reg, {"max_depth": [2, 4], "n_estimators": [50, 200]}, cv=2, verbose=1
+    )
+    grid_cv.fit(X, y)
+    assert grid_cv.best_score_ < 0.7
+    assert grid_cv.best_params_ == {
+        "n_estimators": 200,
+        "max_depth": 4 if tree_method == "exact" else 2,
+    }
 
 
 def test_regression_with_custom_objective():
@@ -750,7 +754,7 @@ def test_parameters_access():
         ]["tree_method"]
         return tm
 
-    assert get_tm(clf) == "exact"
+    assert get_tm(clf) == "auto"  # Kept as auto, immutable since 2.0
 
     clf = pickle.loads(pickle.dumps(clf))
 
@@ -758,7 +762,7 @@ def test_parameters_access():
     assert clf.n_estimators == 2
     assert clf.get_params()["tree_method"] is None
     assert clf.get_params()["n_estimators"] == 2
-    assert get_tm(clf) == "exact"  # preserved for pickle
+    assert get_tm(clf) == "auto"  # preserved for pickle
 
     clf = save_load(clf)
 
@@ -1386,7 +1390,6 @@ def test_categorical():
     X, y = tm.make_categorical(n_samples=32, n_features=2, n_categories=3, onehot=False)
     ft = ["c"] * X.shape[1]
     reg = xgb.XGBRegressor(
-        tree_method="hist",
         feature_types=ft,
         max_cat_to_onehot=1,
         enable_categorical=True,
@@ -1405,30 +1408,13 @@ def test_categorical():
     onehot, y = tm.make_categorical(
         n_samples=32, n_features=2, n_categories=3, onehot=True
     )
-    reg = xgb.XGBRegressor(tree_method="hist")
+    reg = xgb.XGBRegressor()
     reg.fit(onehot, y, eval_set=[(onehot, y)])
     from_enc = reg.evals_result()["validation_0"]["rmse"]
     predt_enc = reg.predict(onehot)
 
     np.testing.assert_allclose(from_cat, from_enc)
     np.testing.assert_allclose(predt_cat, predt_enc)
-
-
-def test_prediction_config():
-    reg = xgb.XGBRegressor()
-    assert reg._can_use_inplace_predict() is True
-
-    reg.set_params(predictor="cpu_predictor")
-    assert reg._can_use_inplace_predict() is False
-
-    reg.set_params(predictor="auto")
-    assert reg._can_use_inplace_predict() is True
-
-    reg.set_params(predictor=None)
-    assert reg._can_use_inplace_predict() is True
-
-    reg.set_params(booster="gblinear")
-    assert reg._can_use_inplace_predict() is False
 
 
 def test_evaluation_metric():

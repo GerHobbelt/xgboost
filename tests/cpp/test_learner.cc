@@ -342,16 +342,6 @@ TEST(Learner, GPUConfiguration) {
     learner->UpdateOneIter(0, p_dmat);
     ASSERT_EQ(learner->Ctx()->gpu_id, 0);
   }
-  {
-    // With CPU algorithm but GPU Predictor, this is to simulate when
-    // XGBoost is only used for prediction, so tree method is not
-    // specified.
-    std::unique_ptr<Learner> learner {Learner::Create(mat)};
-    learner->SetParams({Arg{"tree_method", "hist"},
-                        Arg{"predictor", "gpu_predictor"}});
-    learner->UpdateOneIter(0, p_dmat);
-    ASSERT_EQ(learner->Ctx()->gpu_id, 0);
-  }
 }
 #endif  // defined(XGBOOST_USE_CUDA)
 
@@ -379,6 +369,8 @@ TEST(Learner, Seed) {
 TEST(Learner, ConstantSeed) {
   auto m = RandomDataGenerator{10, 10, 0}.GenerateDMatrix(true);
   std::unique_ptr<Learner> learner{Learner::Create({m})};
+  // Use exact as it doesn't initialize column sampler at construction, which alters the rng.
+  learner->SetParam("tree_method", "exact");
   learner->Configure();  // seed the global random
 
   std::uniform_real_distribution<float> dist;
