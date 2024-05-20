@@ -5,14 +5,12 @@
 \alias{getinfo.xgb.DMatrix}
 \title{Get information of an xgb.DMatrix object}
 \usage{
-getinfo(object, ...)
+getinfo(object, name)
 
-\method{getinfo}{xgb.DMatrix}(object, name, ...)
+\method{getinfo}{xgb.DMatrix}(object, name)
 }
 \arguments{
 \item{object}{Object of class \code{xgb.DMatrix}}
-
-\item{...}{other parameters}
 
 \item{name}{the name of the information field to get (see details)}
 }
@@ -23,15 +21,15 @@ Get information of an xgb.DMatrix object
 The \code{name} field can be one of the following:
 
 \itemize{
-    \item \code{label}
-    \item \code{weight}
-    \item \code{base_margin}
-    \item \code{label_lower_bound}
-    \item \code{label_upper_bound}
-    \item \code{group}
-    \item \code{feature_type}
-    \item \code{feature_name}
-    \item \code{nrow}
+\item \code{label}
+\item \code{weight}
+\item \code{base_margin}
+\item \code{label_lower_bound}
+\item \code{label_upper_bound}
+\item \code{group}
+\item \code{feature_type}
+\item \code{feature_name}
+\item \code{nrow}
 }
 See the documentation for \link{xgb.DMatrix} for more information about these fields.
 
