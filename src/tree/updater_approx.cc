@@ -140,7 +140,7 @@ class GloablApproxBuilder {
                       std::vector<GradientPair> const &gpair, common::Span<float> hess) {
     monitor_->Start(__func__);
     this->histogram_builder_.BuildHistLeftRight(
-        p_fmat, p_tree, partitioner_, valid_candidates,
+        ctx_, p_fmat, p_tree, partitioner_, valid_candidates,
         linalg::MakeTensorView(ctx_, gpair, gpair.size(), 1), BatchSpec(*param_, hess));
     monitor_->Stop(__func__);
   }
@@ -248,8 +248,7 @@ class GlobalApproxUpdater : public TreeUpdater {
   std::unique_ptr<GloablApproxBuilder> pimpl_;
   // pointer to the last DMatrix, used for update prediction cache.
   DMatrix *cached_{nullptr};
-  std::shared_ptr<common::ColumnSampler> column_sampler_ =
-      std::make_shared<common::ColumnSampler>();
+  std::shared_ptr<common::ColumnSampler> column_sampler_;
   ObjInfo const *task_;
   HistMakerTrainParam hist_param_;
 
@@ -284,6 +283,9 @@ class GlobalApproxUpdater : public TreeUpdater {
               common::Span<HostDeviceVector<bst_node_t>> out_position,
               const std::vector<RegTree *> &trees) override {
     CHECK(hist_param_.GetInitialised());
+    if (!column_sampler_) {
+      column_sampler_ = common::MakeColumnSampler(ctx_);
+    }
     pimpl_ = std::make_unique<GloablApproxBuilder>(param, &hist_param_, m->Info(), ctx_,
                                                    column_sampler_, task_, &monitor_);
 
@@ -300,7 +302,7 @@ class GlobalApproxUpdater : public TreeUpdater {
     std::size_t t_idx = 0;
     for (auto p_tree : trees) {
       this->pimpl_->UpdateTree(m, s_gpair, hess, p_tree, &out_position[t_idx]);
-      hist_param_.CheckTreesSynchronized(p_tree);
+      hist_param_.CheckTreesSynchronized(ctx_, p_tree);
       ++t_idx;
     }
   }
