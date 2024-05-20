@@ -9,7 +9,6 @@
   newdata,
   missing = NA,
   outputmargin = FALSE,
-  ntreelimit = NULL,
   predleaf = FALSE,
   predcontrib = FALSE,
   approxcontrib = FALSE,
@@ -18,6 +17,7 @@
   training = FALSE,
   iterationrange = NULL,
   strict_shape = FALSE,
+  validate_features = FALSE,
   ...
 )
 }
@@ -36,8 +36,6 @@ missing values in data (e.g., 0 or some other extreme value).}
 sum of predictions from boosting iterations' results. E.g., setting \code{outputmargin=TRUE} for
 logistic regression would return log-odds instead of probabilities.}
 
-\item{ntreelimit}{Deprecated, use \code{iterationrange} instead.}
-
 \item{predleaf}{Whether to predict pre-tree leaf indices.}
 
 \item{predcontrib}{Whether to return feature contributions to individual predictions (see Details).}
@@ -53,14 +51,38 @@ or \code{predinteraction} is \code{TRUE}.}
 \item{training}{Whether the predictions are used for training. For dart booster,
 training predicting will perform dropout.}
 
-\item{iterationrange}{Specifies which trees are used in prediction. For
-example, take a random forest with 100 rounds.
-With \code{iterationrange=c(1, 21)}, only the trees built during \verb{[1, 21)} (half open set)
-rounds are used in this prediction. The index is 1-based just like an R vector. When set
-to \code{c(1, 1)}, XGBoost will use all trees.}
+\item{iterationrange}{Sequence of rounds/iterations from the model to use for prediction, specified by passing
+a two-dimensional vector with the start and end numbers in the sequence (same format as R's \code{seq} - i.e.
+base-1 indexing, and inclusive of both ends).
+
+\if{html}{\out{<div class="sourceCode">}}\preformatted{   For example, passing `c(1,20)` will predict using the first twenty iterations, while passing `c(1,1)` will
+   predict using only the first one.
+
+   If passing `NULL`, will either stop at the best iteration if the model used early stopping, or use all
+   of the iterations (rounds) otherwise.
+
+   If passing "all", will use all of the rounds regardless of whether the model had early stopping or not.
+}\if{html}{\out{</div>}}}
 
 \item{strict_shape}{Default is \code{FALSE}. When set to \code{TRUE}, the output
 type and shape of predictions are invariant to the model type.}
+
+\item{validate_features}{When \code{TRUE}, validate that the Booster's and newdata's feature_names
+match (only applicable when both \code{object} and \code{newdata} have feature names).
+
+\if{html}{\out{<div class="sourceCode">}}\preformatted{   If the column names differ and `newdata` is not an `xgb.DMatrix`, will try to reorder
+   the columns in `newdata` to match with the booster's.
+
+   If the booster has feature types and `newdata` is either an `xgb.DMatrix` or `data.frame`,
+   will additionally verify that categorical columns are of the correct type in `newdata`,
+   throwing an error if they do not match.
+
+   If passing `FALSE`, it is assumed that the feature names and types are the same,
+   and come in the same order as in the training data.
+
+   Note that this check might add some sizable latency to the predictions, so it's
+   recommended to disable it for performance-sensitive applications.
+}\if{html}{\out{</div>}}}
 
 \item{...}{Not used.}
 }
@@ -145,7 +167,7 @@ bst <- xgb.train(
 # use all trees by default
 pred <- predict(bst, test$data)
 # use only the 1st tree
-pred1 <- predict(bst, test$data, iterationrange = c(1, 2))
+pred1 <- predict(bst, test$data, iterationrange = c(1, 1))
 
 # Predicting tree leafs:
 # the result is an nsamples X ntrees matrix
@@ -216,7 +238,7 @@ str(pred)
 all.equal(pred, pred_labels)
 # prediction from using only 5 iterations should result
 # in the same error as seen in iteration 5:
-pred5 <- predict(bst, as.matrix(iris[, -5]), iterationrange = c(1, 6))
+pred5 <- predict(bst, as.matrix(iris[, -5]), iterationrange = c(1, 5))
 sum(pred5 != lb) / length(lb)
 
 }

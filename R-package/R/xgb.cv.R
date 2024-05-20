@@ -103,7 +103,6 @@
 #'         parameter or randomly generated.
 #'   \item \code{best_iteration} iteration number with the best evaluation metric value
 #'         (only available with early stopping).
-#'   \item \code{best_ntreelimit} and the \code{ntreelimit} Deprecated attributes, use \code{best_iteration} instead.
 #'   \item \code{pred} CV prediction values available when \code{prediction} is set.
 #'         It is either vector or matrix (see \code{\link{cb.cv.predict}}).
 #'   \item \code{models} a list of the CV folds' models. It is only available with the explicit
@@ -198,12 +197,12 @@ xgb.cv <- function(params = list(), data, nrounds, nfold, label = NULL, missing 
     nthread = params$nthread
   )
   bst_folds <- lapply(seq_along(folds), function(k) {
-    dtest  <- slice(dall, folds[[k]])
+    dtest  <- xgb.slice.DMatrix(dall, folds[[k]])
     # code originally contributed by @RolandASc on stackoverflow
     if (is.null(train_folds))
-       dtrain <- slice(dall, unlist(folds[-k]))
+       dtrain <- xgb.slice.DMatrix(dall, unlist(folds[-k]))
     else
-       dtrain <- slice(dall, train_folds[[k]])
+       dtrain <- xgb.slice.DMatrix(dall, train_folds[[k]])
     bst <- xgb.Booster(
       params = params,
       cachelist = list(dtrain, dtest),
@@ -218,7 +217,6 @@ xgb.cv <- function(params = list(), data, nrounds, nfold, label = NULL, missing 
 
   # extract parameters that can affect the relationship b/w #trees and #iterations
   num_class <- max(as.numeric(NVL(params[['num_class']], 1)), 1) # nolint
-  num_parallel_tree <- max(as.numeric(NVL(params[['num_parallel_tree']], 1)), 1) # nolint
 
   # those are fixed for CV (no training continuation)
   begin_iteration <- 1
@@ -318,7 +316,7 @@ print.xgb.cv.synchronous <- function(x, verbose = FALSE, ...) {
       })
     }
 
-    for (n in c('niter', 'best_iteration', 'best_ntreelimit')) {
+    for (n in c('niter', 'best_iteration')) {
       if (is.null(x[[n]]))
         next
       cat(n, ': ', x[[n]], '\n', sep = '')
