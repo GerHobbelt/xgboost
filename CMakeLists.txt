@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
+
+if(PLUGIN_SYCL)
+  set(CMAKE_CXX_COMPILER  "g++")
+  set(CMAKE_C_COMPILER  "gcc")
+  string(REPLACE " -isystem ${CONDA_PREFIX}/include" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+endif()
+
 project(xgboost LANGUAGES CXX C VERSION 2.1.0)
 include(cmake/Utils.cmake)
 list(APPEND CMAKE_MODULE_PATH "${xgboost_SOURCE_DIR}/cmake/modules")
@@ -69,7 +76,10 @@ option(KEEP_BUILD_ARTIFACTS_IN_BINARY_DIR "Output build artifacts in CMake binar
 option(USE_CUDA  "Build with GPU acceleration" OFF)
 option(USE_PER_THREAD_DEFAULT_STREAM "Build with per-thread default stream" ON)
 option(USE_NCCL  "Build with NCCL to enable distributed GPU support." OFF)
+# This is specifically designed for PyPI binary release and should be disabled for most of the cases.
+option(USE_DLOPEN_NCCL "Whether to load nccl dynamically." OFF)
 option(BUILD_WITH_SHARED_NCCL "Build with shared NCCL library." OFF)
+
 if(USE_CUDA)
   if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT DEFINED ENV{CUDAARCHS})
     set(GPU_COMPUTE_VER "" CACHE STRING
@@ -80,6 +90,7 @@ if(USE_CUDA)
     unset(GPU_COMPUTE_VER CACHE)
   endif()
 endif()
+
 # CUDA device LTO was introduced in CMake v3.25 and requires host LTO to also be enabled but can still
 # be explicitly disabled allowing for LTO on host only, host and device, or neither, but device-only LTO
 # is not a supproted configuration
@@ -95,11 +106,10 @@ set(ENABLED_SANITIZERS "address" "leak" CACHE STRING
   "Semicolon separated list of sanitizer names. E.g 'address;leak'. Supported sanitizers are
 address, leak, undefined and thread.")
 ## Plugins
-option(PLUGIN_DENSE_PARSER "Build dense parser plugin" OFF)
 option(PLUGIN_RMM "Build with RAPIDS Memory Manager (RMM)" OFF)
 option(PLUGIN_FEDERATED "Build with Federated Learning" OFF)
 ## TODO: 1. Add check if DPC++ compiler is used for building
-option(PLUGIN_UPDATER_ONEAPI "DPC++ updater" OFF)
+option(PLUGIN_SYCL "SYCL plugin" OFF)
 option(ADD_PKGCONFIG "Add xgboost.pc into system." ON)
 
 #-- Checks for building XGBoost
@@ -114,6 +124,12 @@ if(USE_DEVICE_DEBUG AND NOT (USE_CUDA))
 endif()
 if(BUILD_WITH_SHARED_NCCL AND (NOT USE_NCCL))
   message(SEND_ERROR "Build XGBoost with -DUSE_NCCL=ON to enable BUILD_WITH_SHARED_NCCL.")
+endif()
+if(USE_DLOPEN_NCCL AND (NOT USE_NCCL))
+  message(SEND_ERROR "Build XGBoost with -DUSE_NCCL=ON to enable USE_DLOPEN_NCCL.")
+endif()
+if(USE_DLOPEN_NCCL AND (NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux")))
+  message(SEND_ERROR "`USE_DLOPEN_NCCL` supports only Linux at the moment.")
 endif()
 if(JVM_BINDINGS AND R_LIB)
   message(SEND_ERROR "`R_LIB' is not compatible with `JVM_BINDINGS' as they both have customized configurations.")
@@ -174,6 +190,9 @@ if(USE_AZURE)
 endif()
 if(USE_HDFS)
   message(SEND_ERROR "The option `USE_HDFS` has been removed from XGBoost")
+endif()
+if(PLUGIN_DENSE_PARSER)
+  message(SEND_ERROR "The option `PLUGIN_DENSE_PARSER` has been removed from XGBoost.")
 endif()
 
 #-- Sanitizer
@@ -299,6 +318,15 @@ if(PLUGIN_RMM)
   list(APPEND rmm_link_libs CUDA::cudart_static)
   set_target_properties(rmm::rmm PROPERTIES INTERFACE_LINK_LIBRARIES "${rmm_link_libs}")
   get_target_property(rmm_link_libs rmm::rmm INTERFACE_LINK_LIBRARIES)
+endif()
+
+if(PLUGIN_SYCL)
+  set(CMAKE_CXX_LINK_EXECUTABLE
+      "icpx <FLAGS> <CMAKE_CXX_LINK_FLAGS> -qopenmp <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+  set(CMAKE_CXX_CREATE_SHARED_LIBRARY
+      "icpx <CMAKE_SHARED_LIBRARY_CXX_FLAGS> -qopenmp <LANGUAGE_COMPILE_FLAGS> \
+      <CMAKE_SHARED_LIBRARY_CREATE_CXX_FLAGS> <SONAME_FLAG>,<TARGET_SONAME> \
+      -o <TARGET> <OBJECTS> <LINK_LIBRARIES>")
 endif()
 
 #-- library

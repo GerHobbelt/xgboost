@@ -5,7 +5,7 @@
 #' \code{\link{xgb.DMatrix.save}}).
 #'
 #' @param data a \code{matrix} object (either numeric or integer), a \code{dgCMatrix} object,
-#'        a \code{dgRMatrix} object (only when making predictions from a fitted model),
+#'        a \code{dgRMatrix} object,
 #'        a \code{dsparseVector} object (only when making predictions from a fitted model, will be
 #'        interpreted as a row vector), or a character string representing a filename.
 #' @param info a named list of additional information to store in the \code{xgb.DMatrix} object.
@@ -243,6 +243,9 @@ getinfo.xgb.DMatrix <- function(object, name, ...) {
     ret <- .Call(XGDMatrixGetStrFeatureInfo_R, object, name)
   } else if (name != "nrow") {
     ret <- .Call(XGDMatrixGetInfo_R, object, name)
+    if (length(ret) > nrow(object)) {
+      ret <- matrix(ret, nrow = nrow(object), byrow = TRUE)
+    }
   } else {
     ret <- nrow(object)
   }
@@ -286,9 +289,9 @@ setinfo <- function(object, ...) UseMethod("setinfo")
 #' @export
 setinfo.xgb.DMatrix <- function(object, name, info, ...) {
   if (name == "label") {
-    if (length(info) != nrow(object))
+    if (NROW(info) != nrow(object))
       stop("The length of labels must equal to the number of rows in the input data")
-    .Call(XGDMatrixSetInfo_R, object, name, as.numeric(info))
+    .Call(XGDMatrixSetInfo_R, object, name, info)
     return(TRUE)
   }
   if (name == "label_lower_bound") {
