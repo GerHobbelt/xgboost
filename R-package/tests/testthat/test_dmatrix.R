@@ -302,6 +302,37 @@ test_that("xgb.DMatrix: Inf as missing", {
   file.remove(fname_nan)
 })
 
+test_that("xgb.DMatrix: missing in CSR", {
+  x_dense <- matrix(as.numeric(1:10), nrow = 5)
+  x_dense[2, 1] <- NA_real_
+
+  x_csr <- as(x_dense, "RsparseMatrix")
+
+  m_dense <- xgb.DMatrix(x_dense, nthread = n_threads, missing = NA_real_)
+  xgb.DMatrix.save(m_dense, "dense.dmatrix")
+
+  m_csr <- xgb.DMatrix(x_csr, nthread = n_threads, missing = NA)
+  xgb.DMatrix.save(m_csr, "csr.dmatrix")
+
+  denseconn <- file("dense.dmatrix", "rb")
+  csrconn <- file("csr.dmatrix", "rb")
+
+  expect_equal(file.size("dense.dmatrix"), file.size("csr.dmatrix"))
+
+  bytes <- file.size("dense.dmatrix")
+  densedmatrix <- readBin(denseconn, "raw", n = bytes)
+  csrmatrix <- readBin(csrconn, "raw", n = bytes)
+
+  expect_equal(length(densedmatrix), length(csrmatrix))
+  expect_equal(densedmatrix, csrmatrix)
+
+  close(denseconn)
+  close(csrconn)
+
+  file.remove("dense.dmatrix")
+  file.remove("csr.dmatrix")
+})
+
 test_that("xgb.DMatrix: error on three-dimensional array", {
   set.seed(123)
   x <- matrix(rnorm(500), nrow = 50)
@@ -690,5 +721,22 @@ test_that("xgb.DMatrix: quantile cuts look correct", {
       expect_true(col_max[col] < cuts[length(cuts)])
       expect_true(length(cuts) <= 9)
     }
+  )
+})
+
+test_that("xgb.DMatrix: can read CSV", {
+  txt <- paste(
+    "1,2,3",
+    "-1,3,2",
+    sep = "\n"
+  )
+  fname <- file.path(tempdir(), "data.csv")
+  writeChar(txt, fname)
+  uri <- paste0(fname, "?format=csv&label_column=0")
+  dm <- xgb.DMatrix(uri, silent = TRUE)
+  expect_equal(getinfo(dm, "label"), c(1, -1))
+  expect_equal(
+    as.matrix(xgb.get.DMatrix.data(dm)),
+    matrix(c(2, 3, 3, 2), nrow = 2, byrow = TRUE)
   )
 })
