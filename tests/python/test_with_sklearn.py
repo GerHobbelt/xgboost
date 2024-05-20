@@ -30,8 +30,8 @@ def test_binary_classification():
     kf = KFold(n_splits=2, shuffle=True, random_state=rng)
     for cls in (xgb.XGBClassifier, xgb.XGBRFClassifier):
         for train_index, test_index in kf.split(X, y):
-            clf = cls(random_state=42)
-            xgb_model = clf.fit(X[train_index], y[train_index], eval_metric=['auc', 'logloss'])
+            clf = cls(random_state=42, eval_metric=['auc', 'logloss'])
+            xgb_model = clf.fit(X[train_index], y[train_index])
             preds = xgb_model.predict(X[test_index])
             labels = y[test_index]
             err = sum(1 for i in range(len(preds))
@@ -101,10 +101,11 @@ def test_best_iteration():
     def train(booster: str, forest: Optional[int]) -> None:
         rounds = 4
         cls = xgb.XGBClassifier(
-            n_estimators=rounds, num_parallel_tree=forest, booster=booster
-        ).fit(
-            X, y, eval_set=[(X, y)], early_stopping_rounds=3
-        )
+            n_estimators=rounds,
+            num_parallel_tree=forest,
+            booster=booster,
+            early_stopping_rounds=3,
+        ).fit(X, y, eval_set=[(X, y)])
         assert cls.best_iteration == rounds - 1
 
         # best_iteration is used by default, assert that under gblinear it's
@@ -112,9 +113,9 @@ def test_best_iteration():
         cls.predict(X)
 
     num_parallel_tree = 4
-    train('gbtree', num_parallel_tree)
-    train('dart', num_parallel_tree)
-    train('gblinear', None)
+    train("gbtree", num_parallel_tree)
+    train("dart", num_parallel_tree)
+    train("gblinear", None)
 
 
 def test_ranking():
@@ -257,6 +258,7 @@ def test_stacking_classification():
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
     clf.fit(X_train, y_train).score(X_test, y_test)
+
 
 @pytest.mark.skipif(**tm.no_pandas())
 def test_feature_importances_weight():
@@ -474,7 +476,8 @@ def run_housing_rf_regression(tree_method):
 
     rfreg = xgb.XGBRFRegressor()
     with pytest.raises(NotImplementedError):
-        rfreg.fit(X, y, early_stopping_rounds=10)
+        rfreg.set_params(early_stopping_rounds=10)
+        rfreg.fit(X, y)
 
 
 def test_rf_regression():
@@ -574,7 +577,7 @@ def test_classification_with_custom_objective():
         return logregobj(y, p)
 
     cls.set_params(objective=wrapped)
-    cls.predict(X)              # no throw
+    cls.predict(X)  # no throw
     cls.fit(X, y)
 
     assert is_called[0]
@@ -678,7 +681,6 @@ def test_split_value_histograms():
     params = {
         "max_depth": 6,
         "eta": 0.01,
-        "verbosity": 0,
         "objective": "binary:logistic",
         "base_score": 0.5,
     }
@@ -845,178 +847,70 @@ def run_validation_weights(model):
     y_train, y_test = y[:1600], y[1600:]
 
     # instantiate model
-    param_dist = {'objective': 'binary:logistic', 'n_estimators': 2,
-                  'random_state': 123}
+    param_dist = {
+        "objective": "binary:logistic",
+        "n_estimators": 2,
+        "random_state": 123,
+    }
     clf = model(**param_dist)
 
     # train it using instance weights only in the training set
     weights_train = np.random.choice([1, 2], len(X_train))
-    clf.fit(X_train, y_train,
-            sample_weight=weights_train,
-            eval_set=[(X_test, y_test)],
-            eval_metric='logloss',
-            verbose=False)
-
+    clf.set_params(eval_metric="logloss")
+    clf.fit(
+        X_train,
+        y_train,
+        sample_weight=weights_train,
+        eval_set=[(X_test, y_test)],
+        verbose=False,
+    )
     # evaluate logloss metric on test set *without* using weights
     evals_result_without_weights = clf.evals_result()
-    logloss_without_weights = evals_result_without_weights[
-        "validation_0"]["logloss"]
+    logloss_without_weights = evals_result_without_weights["validation_0"]["logloss"]
 
     # now use weights for the test set
     np.random.seed(0)
     weights_test = np.random.choice([1, 2], len(X_test))
-    clf.fit(X_train, y_train,
-            sample_weight=weights_train,
-            eval_set=[(X_test, y_test)],
-            sample_weight_eval_set=[weights_test],
-            eval_metric='logloss',
-            verbose=False)
+    clf.set_params(eval_metric="logloss")
+    clf.fit(
+        X_train,
+        y_train,
+        sample_weight=weights_train,
+        eval_set=[(X_test, y_test)],
+        sample_weight_eval_set=[weights_test],
+        verbose=False,
+    )
     evals_result_with_weights = clf.evals_result()
     logloss_with_weights = evals_result_with_weights["validation_0"]["logloss"]
 
     # check that the logloss in the test set is actually different when using
     # weights than when not using them
-    assert all((logloss_with_weights[i] != logloss_without_weights[i]
-                for i in [0, 1]))
+    assert all((logloss_with_weights[i] != logloss_without_weights[i] for i in [0, 1]))
 
     with pytest.raises(ValueError):
         # length of eval set and sample weight doesn't match.
-        clf.fit(X_train, y_train, sample_weight=weights_train,
-                eval_set=[(X_train, y_train), (X_test, y_test)],
-                sample_weight_eval_set=[weights_train])
+        clf.fit(
+            X_train,
+            y_train,
+            sample_weight=weights_train,
+            eval_set=[(X_train, y_train), (X_test, y_test)],
+            sample_weight_eval_set=[weights_train],
+        )
 
     with pytest.raises(ValueError):
         cls = xgb.XGBClassifier()
-        cls.fit(X_train, y_train, sample_weight=weights_train,
-                eval_set=[(X_train, y_train), (X_test, y_test)],
-                sample_weight_eval_set=[weights_train])
+        cls.fit(
+            X_train,
+            y_train,
+            sample_weight=weights_train,
+            eval_set=[(X_train, y_train), (X_test, y_test)],
+            sample_weight_eval_set=[weights_train],
+        )
 
 
 def test_validation_weights():
     run_validation_weights(xgb.XGBModel)
     run_validation_weights(xgb.XGBClassifier)
-
-
-def save_load_model(model_path):
-    from sklearn.datasets import load_digits
-    from sklearn.model_selection import KFold
-
-    digits = load_digits(n_class=2)
-    y = digits['target']
-    X = digits['data']
-    kf = KFold(n_splits=2, shuffle=True, random_state=rng)
-    for train_index, test_index in kf.split(X, y):
-        xgb_model = xgb.XGBClassifier().fit(X[train_index], y[train_index])
-        xgb_model.save_model(model_path)
-
-        xgb_model = xgb.XGBClassifier()
-        xgb_model.load_model(model_path)
-
-        assert isinstance(xgb_model.classes_, np.ndarray)
-        np.testing.assert_equal(xgb_model.classes_, np.array([0, 1]))
-        assert isinstance(xgb_model._Booster, xgb.Booster)
-
-        preds = xgb_model.predict(X[test_index])
-        labels = y[test_index]
-        err = sum(1 for i in range(len(preds))
-                  if int(preds[i] > 0.5) != labels[i]) / float(len(preds))
-        assert err < 0.1
-        assert xgb_model.get_booster().attr('scikit_learn') is None
-
-        # test native booster
-        preds = xgb_model.predict(X[test_index], output_margin=True)
-        booster = xgb.Booster(model_file=model_path)
-        predt_1 = booster.predict(xgb.DMatrix(X[test_index]),
-                                  output_margin=True)
-        assert np.allclose(preds, predt_1)
-
-        with pytest.raises(TypeError):
-            xgb_model = xgb.XGBModel()
-            xgb_model.load_model(model_path)
-
-    clf = xgb.XGBClassifier(booster="gblinear", early_stopping_rounds=1)
-    clf.fit(X, y, eval_set=[(X, y)])
-    best_iteration = clf.best_iteration
-    best_score = clf.best_score
-    predt_0 = clf.predict(X)
-    clf.save_model(model_path)
-    clf.load_model(model_path)
-    assert clf.booster == "gblinear"
-    predt_1 = clf.predict(X)
-    np.testing.assert_allclose(predt_0, predt_1)
-    assert clf.best_iteration == best_iteration
-    assert clf.best_score == best_score
-
-    clfpkl = pickle.dumps(clf)
-    clf = pickle.loads(clfpkl)
-    predt_2 = clf.predict(X)
-    np.testing.assert_allclose(predt_0, predt_2)
-    assert clf.best_iteration == best_iteration
-    assert clf.best_score == best_score
-
-
-def test_save_load_model():
-    with tempfile.TemporaryDirectory() as tempdir:
-        model_path = os.path.join(tempdir, "digits.model")
-        save_load_model(model_path)
-
-    with tempfile.TemporaryDirectory() as tempdir:
-        model_path = os.path.join(tempdir, "digits.model.json")
-        save_load_model(model_path)
-
-    from sklearn.datasets import load_digits
-    from sklearn.model_selection import train_test_split
-
-    with tempfile.TemporaryDirectory() as tempdir:
-        model_path = os.path.join(tempdir, "digits.model.ubj")
-        digits = load_digits(n_class=2)
-        y = digits["target"]
-        X = digits["data"]
-        booster = xgb.train(
-            {"tree_method": "hist", "objective": "binary:logistic"},
-            dtrain=xgb.DMatrix(X, y),
-            num_boost_round=4,
-        )
-        predt_0 = booster.predict(xgb.DMatrix(X))
-        booster.save_model(model_path)
-        cls = xgb.XGBClassifier()
-        cls.load_model(model_path)
-
-        proba = cls.predict_proba(X)
-        assert proba.shape[0] == X.shape[0]
-        assert proba.shape[1] == 2  # binary
-
-        predt_1 = cls.predict_proba(X)[:, 1]
-        assert np.allclose(predt_0, predt_1)
-
-        cls = xgb.XGBModel()
-        cls.load_model(model_path)
-        predt_1 = cls.predict(X)
-        assert np.allclose(predt_0, predt_1)
-
-        # mclass
-        X, y = load_digits(n_class=10, return_X_y=True)
-        # small test_size to force early stop
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.01, random_state=1
-        )
-        clf = xgb.XGBClassifier(
-            n_estimators=64, tree_method="hist", early_stopping_rounds=2
-        )
-        clf.fit(X_train, y_train, eval_set=[(X_test, y_test)])
-        score = clf.best_score
-        clf.save_model(model_path)
-
-        clf = xgb.XGBClassifier()
-        clf.load_model(model_path)
-        assert clf.classes_.size == 10
-        assert clf.objective == "multi:softprob"
-
-        np.testing.assert_equal(clf.classes_, np.arange(10))
-        assert clf.n_classes_ == 10
-
-        assert clf.best_iteration == 27
-        assert clf.best_score == score
 
 
 def test_RFECV():
@@ -1083,8 +977,7 @@ def test_XGBClassifier_resume():
 
         # file name of stored xgb model
         model1.save_model(model1_path)
-        model2 = xgb.XGBClassifier(
-            learning_rate=0.3, random_state=0, n_estimators=8)
+        model2 = xgb.XGBClassifier(learning_rate=0.3, random_state=0, n_estimators=8)
         model2.fit(X, Y, xgb_model=model1_path)
 
         pred2 = model2.predict(X)
@@ -1095,8 +988,7 @@ def test_XGBClassifier_resume():
 
         # file name of 'Booster' instance Xgb model
         model1.get_booster().save_model(model1_booster_path)
-        model2 = xgb.XGBClassifier(
-            learning_rate=0.3, random_state=0, n_estimators=8)
+        model2 = xgb.XGBClassifier(learning_rate=0.3, random_state=0, n_estimators=8)
         model2.fit(X, Y, xgb_model=model1_booster_path)
 
         pred2 = model2.predict(X)
@@ -1402,12 +1294,16 @@ def test_estimator_reg(estimator, check):
         ):
             estimator.fit(X, y)
         return
-    if os.environ["PYTEST_CURRENT_TEST"].find("check_estimators_overwrite_params") != -1:
+    if (
+        os.environ["PYTEST_CURRENT_TEST"].find("check_estimators_overwrite_params")
+        != -1
+    ):
         # A hack to pass the scikit-learn parameter mutation tests.  XGBoost regressor
-        # returns actual internal default values for parameters in `get_params`, but those
-        # are set as `None` in sklearn interface to avoid duplication.  So we fit a dummy
-        # model and obtain the default parameters here for the mutation tests.
+        # returns actual internal default values for parameters in `get_params`, but
+        # those are set as `None` in sklearn interface to avoid duplication.  So we fit
+        # a dummy model and obtain the default parameters here for the mutation tests.
         from sklearn.datasets import make_regression
+
         X, y = make_regression(n_samples=2, n_features=1)
         estimator.set_params(**xgb.XGBRegressor().fit(X, y).get_params())
 
@@ -1448,6 +1344,7 @@ def test_categorical():
 def test_evaluation_metric():
     from sklearn.datasets import load_diabetes, load_digits
     from sklearn.metrics import mean_absolute_error
+
     X, y = load_diabetes(return_X_y=True)
     n_estimators = 16
 
@@ -1463,17 +1360,6 @@ def test_evaluation_metric():
     assert len(lines) == n_estimators
     for line in lines:
         assert line.find("mean_absolute_error") != -1
-
-    def metric(predt: np.ndarray, Xy: xgb.DMatrix):
-        y = Xy.get_label()
-        return "m", np.abs(predt - y).sum()
-
-    with pytest.warns(UserWarning):
-        reg = xgb.XGBRegressor(
-            tree_method="hist",
-            n_estimators=1,
-        )
-        reg.fit(X, y, eval_set=[(X, y)], eval_metric=metric)
 
     def merror(y_true: np.ndarray, predt: np.ndarray):
         n_samples = y_true.shape[0]

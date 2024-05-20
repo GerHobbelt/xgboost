@@ -937,8 +937,10 @@ def run_empty_dmatrix_auc(client: "Client", device: str, n_workers: int) -> None
     valid_X = dd.from_array(valid_X_, chunksize=n_samples)
     valid_y = dd.from_array(valid_y_, chunksize=n_samples)
 
-    cls = xgb.dask.DaskXGBClassifier(device=device, n_estimators=2)
-    cls.fit(X, y, eval_metric=["auc", "aucpr"], eval_set=[(valid_X, valid_y)])
+    cls = xgb.dask.DaskXGBClassifier(
+        device=device, n_estimators=2, eval_metric=["auc", "aucpr"]
+    )
+    cls.fit(X, y, eval_set=[(valid_X, valid_y)])
 
     # multiclass
     X_, y_ = make_classification(
@@ -966,8 +968,10 @@ def run_empty_dmatrix_auc(client: "Client", device: str, n_workers: int) -> None
     valid_X = dd.from_array(valid_X_, chunksize=n_samples)
     valid_y = dd.from_array(valid_y_, chunksize=n_samples)
 
-    cls = xgb.dask.DaskXGBClassifier(device=device, n_estimators=2)
-    cls.fit(X, y, eval_metric=["auc", "aucpr"], eval_set=[(valid_X, valid_y)])
+    cls = xgb.dask.DaskXGBClassifier(
+        device=device, n_estimators=2, eval_metric=["auc", "aucpr"]
+    )
+    cls.fit(X, y, eval_set=[(valid_X, valid_y)])
 
 
 def test_empty_dmatrix_auc() -> None:
@@ -994,11 +998,11 @@ def run_auc(client: "Client", device: str) -> None:
     valid_X = dd.from_array(valid_X_, chunksize=10)
     valid_y = dd.from_array(valid_y_, chunksize=10)
 
-    cls = xgb.XGBClassifier(device=device, n_estimators=2)
-    cls.fit(X_, y_, eval_metric="auc", eval_set=[(valid_X_, valid_y_)])
+    cls = xgb.XGBClassifier(device=device, n_estimators=2, eval_metric="auc")
+    cls.fit(X_, y_, eval_set=[(valid_X_, valid_y_)])
 
-    dcls = xgb.dask.DaskXGBClassifier(device=device, n_estimators=2)
-    dcls.fit(X, y, eval_metric="auc", eval_set=[(valid_X, valid_y)])
+    dcls = xgb.dask.DaskXGBClassifier(device=device, n_estimators=2, eval_metric="auc")
+    dcls.fit(X, y, eval_set=[(valid_X, valid_y)])
 
     approx = dcls.evals_result()["validation_0"]["auc"]
     exact = cls.evals_result()["validation_0"]["auc"]
@@ -1267,16 +1271,16 @@ def test_dask_ranking(client: "Client") -> None:
     qid_valid = qid_valid.astype(np.uint32)
     qid_test = qid_test.astype(np.uint32)
 
-    rank = xgb.dask.DaskXGBRanker(n_estimators=2500)
+    rank = xgb.dask.DaskXGBRanker(
+        n_estimators=2500, eval_metric=["ndcg"], early_stopping_rounds=10
+    )
     rank.fit(
         x_train,
         y_train,
         qid=qid_train,
         eval_set=[(x_test, y_test), (x_train, y_train)],
         eval_qid=[qid_test, qid_train],
-        eval_metric=["ndcg"],
         verbose=True,
-        early_stopping_rounds=10,
     )
     assert rank.n_features_in_ == 46
     assert rank.best_score > 0.98
@@ -1590,7 +1594,7 @@ class TestWithDask:
     @given(
         params=hist_parameter_strategy,
         cache_param=hist_cache_strategy,
-        dataset=tm.make_dataset_strategy()
+        dataset=tm.make_dataset_strategy(),
     )
     @settings(
         deadline=None, max_examples=10, suppress_health_check=suppress, print_blob=True
@@ -2150,13 +2154,15 @@ class TestDaskCallbacks:
         valid_X, valid_y = load_breast_cancer(return_X_y=True)
         valid_X, valid_y = da.from_array(valid_X), da.from_array(valid_y)
         cls = xgb.dask.DaskXGBClassifier(
-            objective="binary:logistic", tree_method="hist", n_estimators=1000
+            objective="binary:logistic",
+            tree_method="hist",
+            n_estimators=1000,
+            early_stopping_rounds=early_stopping_rounds,
         )
         cls.client = client
         cls.fit(
             X,
             y,
-            early_stopping_rounds=early_stopping_rounds,
             eval_set=[(valid_X, valid_y)],
         )
         booster = cls.get_booster()
@@ -2165,15 +2171,17 @@ class TestDaskCallbacks:
 
         # Specify the metric
         cls = xgb.dask.DaskXGBClassifier(
-            objective="binary:logistic", tree_method="hist", n_estimators=1000
+            objective="binary:logistic",
+            tree_method="hist",
+            n_estimators=1000,
+            early_stopping_rounds=early_stopping_rounds,
+            eval_metric="error",
         )
         cls.client = client
         cls.fit(
             X,
             y,
-            early_stopping_rounds=early_stopping_rounds,
             eval_set=[(valid_X, valid_y)],
-            eval_metric="error",
         )
         assert tm.non_increasing(cls.evals_result()["validation_0"]["error"])
         booster = cls.get_booster()
@@ -2215,12 +2223,12 @@ class TestDaskCallbacks:
             tree_method="hist",
             n_estimators=1000,
             eval_metric=tm.eval_error_metric_skl,
+            early_stopping_rounds=early_stopping_rounds,
         )
         cls.client = client
         cls.fit(
             X,
             y,
-            early_stopping_rounds=early_stopping_rounds,
             eval_set=[(valid_X, valid_y)],
         )
         booster = cls.get_booster()
@@ -2234,32 +2242,44 @@ class TestDaskCallbacks:
         X, y = load_breast_cancer(return_X_y=True)
         X, y = da.from_array(X), da.from_array(y)
 
-        cls = xgb.dask.DaskXGBClassifier(
-            objective="binary:logistic", tree_method="hist", n_estimators=10
-        )
-        cls.client = client
-
         with tempfile.TemporaryDirectory() as tmpdir:
-            cls.fit(
-                X,
-                y,
+            cls = xgb.dask.DaskXGBClassifier(
+                objective="binary:logistic",
+                tree_method="hist",
+                n_estimators=10,
                 callbacks=[
                     xgb.callback.TrainingCheckPoint(
                         directory=Path(tmpdir), interval=1, name="model"
                     )
                 ],
             )
+            cls.client = client
+            cls.fit(
+                X,
+                y,
+            )
             for i in range(1, 10):
-                assert os.path.exists(os.path.join(tmpdir, "model_" + str(i) + ".json"))
+                assert os.path.exists(
+                    os.path.join(
+                        tmpdir,
+                        f"model_{i}.{xgb.callback.TrainingCheckPoint.default_format}",
+                    )
+                )
 
 
-@gen_cluster(client=True, clean_kwargs={"processes": False, "threads": False}, allow_unclosed=True)
+@gen_cluster(
+    client=True,
+    clean_kwargs={"processes": False, "threads": False},
+    allow_unclosed=True,
+)
 async def test_worker_left(c, s, a, b):
     async with Worker(s.address):
         dx = da.random.random((1000, 10)).rechunk(chunks=(10, None))
         dy = da.random.random((1000,)).rechunk(chunks=(10,))
         d_train = await xgb.dask.DaskDMatrix(
-            c, dx, dy,
+            c,
+            dx,
+            dy,
         )
     await async_poll_for(lambda: len(s.workers) == 2, timeout=5)
     with pytest.raises(RuntimeError, match="Missing"):
@@ -2271,12 +2291,19 @@ async def test_worker_left(c, s, a, b):
         )
 
 
-@gen_cluster(client=True, Worker=Nanny, clean_kwargs={"processes": False, "threads": False}, allow_unclosed=True)
+@gen_cluster(
+    client=True,
+    Worker=Nanny,
+    clean_kwargs={"processes": False, "threads": False},
+    allow_unclosed=True,
+)
 async def test_worker_restarted(c, s, a, b):
     dx = da.random.random((1000, 10)).rechunk(chunks=(10, None))
     dy = da.random.random((1000,)).rechunk(chunks=(10,))
     d_train = await xgb.dask.DaskDMatrix(
-        c, dx, dy,
+        c,
+        dx,
+        dy,
     )
     await c.restart_workers([a.worker_address])
     with pytest.raises(RuntimeError, match="Missing"):
