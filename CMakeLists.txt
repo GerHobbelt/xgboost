@@ -251,20 +251,8 @@ target_include_directories(xgboost
   $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/include>)
 #-- End shared library
 
-#-- CLI for xgboost
-add_executable(runxgboost ${xgboost_SOURCE_DIR}/src/cli_main.cc)
-target_link_libraries(runxgboost PRIVATE objxgboost)
-target_include_directories(runxgboost
-  PRIVATE
-  ${xgboost_SOURCE_DIR}/include
-  ${xgboost_SOURCE_DIR}/dmlc-core/include
-  ${xgboost_SOURCE_DIR}/rabit/include
-)
-set_target_properties(runxgboost PROPERTIES OUTPUT_NAME xgboost)
-#-- End CLI for xgboost
-
 # Common setup for all targets
-foreach(target xgboost objxgboost dmlc runxgboost)
+foreach(target xgboost objxgboost dmlc)
   xgboost_target_properties(${target})
   xgboost_target_link_libraries(${target})
   xgboost_target_defs(${target})
@@ -276,10 +264,7 @@ if (JVM_BINDINGS)
   xgboost_target_defs(xgboost4j)
 endif (JVM_BINDINGS)
 
-set_output_directory(runxgboost ${xgboost_SOURCE_DIR})
 set_output_directory(xgboost ${xgboost_SOURCE_DIR}/lib)
-# Ensure these two targets do not build simultaneously, as they produce outputs with conflicting names
-add_dependencies(xgboost runxgboost)
 
 #-- Installing XGBoost
 if (R_LIB)
@@ -315,9 +300,9 @@ install(DIRECTORY ${xgboost_SOURCE_DIR}/include/xgboost
 #
 # https://github.com/dmlc/xgboost/issues/6085
 if (BUILD_STATIC_LIB)
-  set(INSTALL_TARGETS xgboost runxgboost objxgboost dmlc)
+  set(INSTALL_TARGETS xgboost objxgboost dmlc)
 else (BUILD_STATIC_LIB)
-  set(INSTALL_TARGETS xgboost runxgboost)
+  set(INSTALL_TARGETS xgboost)
 endif (BUILD_STATIC_LIB)
 
 install(TARGETS ${INSTALL_TARGETS}
@@ -367,13 +352,6 @@ if (GOOGLE_TEST)
     ${xgboost_SOURCE_DIR}/tests/cli/machine.conf.in
     ${xgboost_BINARY_DIR}/tests/cli/machine.conf
     @ONLY)
-  add_test(
-    NAME TestXGBoostCLI
-    COMMAND runxgboost ${xgboost_BINARY_DIR}/tests/cli/machine.conf
-    WORKING_DIRECTORY ${xgboost_BINARY_DIR})
-  set_tests_properties(TestXGBoostCLI
-    PROPERTIES
-    PASS_REGULAR_EXPRESSION ".*test-rmse:0.087.*")
 endif (GOOGLE_TEST)
 
 # For MSVC: Call msvc_use_static_runtime() once again to completely
