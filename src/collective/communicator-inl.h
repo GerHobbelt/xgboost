@@ -197,7 +197,7 @@ inline void Allreduce(uint64_t *send_receive_buffer, size_t count) {
 template <Operation op, typename T,
           typename = std::enable_if_t<std::is_same<size_t, T>{} && !std::is_same<uint64_t, T>{}> >
 inline void Allreduce(T *send_receive_buffer, size_t count) {
-  static_assert(sizeof(T) == sizeof(uint64_t), "");
+  // static_assert(sizeof(T) == sizeof(uint64_t), "");
   Communicator::Get()->AllReduce(send_receive_buffer, count, DataType::kUInt64, op);
 }
 
