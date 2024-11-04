@@ -198,19 +198,20 @@ def skip_win() -> PytestSkip:
 class IteratorForTest(xgb.core.DataIter):
     """Iterator for testing streaming DMatrix. (external memory, quantile)"""
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         X: Sequence,
         y: Sequence,
         w: Optional[Sequence],
         cache: Optional[str],
+        on_host: bool = False,
     ) -> None:
         assert len(X) == len(y)
         self.X = X
         self.y = y
         self.w = w
         self.it = 0
-        super().__init__(cache_prefix=cache)
+        super().__init__(cache_prefix=cache, on_host=on_host)
 
     def next(self, input_data: Callable) -> int:
         if self.it == len(self.X):
@@ -247,13 +248,14 @@ class IteratorForTest(xgb.core.DataIter):
         return X, y, w
 
 
-def make_batches(
+def make_batches(  # pylint: disable=too-many-arguments,too-many-locals
     n_samples_per_batch: int,
     n_features: int,
     n_batches: int,
     use_cupy: bool = False,
     *,
     vary_size: bool = False,
+    random_state: int = 1994,
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray]]:
     X = []
     y = []
@@ -261,9 +263,9 @@ def make_batches(
     if use_cupy:
         import cupy
 
-        rng = cupy.random.RandomState(1994)
+        rng = cupy.random.RandomState(random_state)
     else:
-        rng = np.random.RandomState(1994)
+        rng = np.random.RandomState(random_state)
     for i in range(n_batches):
         n_samples = n_samples_per_batch + i * 10 if vary_size else n_samples_per_batch
         _X = rng.randn(n_samples, n_features)
@@ -367,7 +369,11 @@ class TestDataset:
                 weight.append(w)
 
         it = IteratorForTest(
-            predictor, response, weight if weight else None, cache="cache"
+            predictor,
+            response,
+            weight if weight else None,
+            cache="cache",
+            on_host=False,
         )
         return xgb.DMatrix(it)
 

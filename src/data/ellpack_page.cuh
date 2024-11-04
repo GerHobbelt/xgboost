@@ -45,17 +45,17 @@ struct EllpackDeviceAccessor {
         n_rows(n_rows),
         gidx_iter(gidx_iter),
         feature_types{feature_types} {
-    if (device.IsCPU()) {
-      gidx_fvalue_map = cuts->cut_values_.ConstHostSpan();
-      feature_segments = cuts->cut_ptrs_.ConstHostSpan();
-      min_fvalue = cuts->min_vals_.ConstHostSpan();
-    } else {
+    if (device.IsCUDA()) {
       cuts->cut_values_.SetDevice(device);
       cuts->cut_ptrs_.SetDevice(device);
       cuts->min_vals_.SetDevice(device);
       gidx_fvalue_map = cuts->cut_values_.ConstDeviceSpan();
       feature_segments = cuts->cut_ptrs_.ConstDeviceSpan();
       min_fvalue = cuts->min_vals_.ConstDeviceSpan();
+    } else {
+      gidx_fvalue_map = cuts->cut_values_.ConstHostSpan();
+      feature_segments = cuts->cut_ptrs_.ConstHostSpan();
+      min_fvalue = cuts->min_vals_.ConstHostSpan();
     }
   }
   // Get a matrix element, uses binary search for look up Return NaN if missing
@@ -143,7 +143,7 @@ class EllpackPageImpl {
    * and the given number of rows.
    */
   EllpackPageImpl(DeviceOrd device, std::shared_ptr<common::HistogramCuts const> cuts,
-                  bool is_dense, size_t row_stride, size_t n_rows);
+                  bool is_dense, bst_idx_t row_stride, bst_idx_t n_rows);
   /*!
    * \brief Constructor used for external memory.
    */
@@ -181,14 +181,14 @@ class EllpackPageImpl {
 
   /*! \brief Compact the given ELLPACK page into the current page.
    *
-   * @param device The GPU device to use.
+   * @param context The GPU context.
    * @param page The ELLPACK page to compact from.
    * @param row_indexes Row indexes for the compacted page.
    */
-  void Compact(DeviceOrd device, EllpackPageImpl const* page, common::Span<size_t> row_indexes);
+  void Compact(Context const* ctx, EllpackPageImpl const* page, common::Span<size_t> row_indexes);
 
   /*! \return Number of instances in the page. */
-  [[nodiscard]] size_t Size() const;
+  [[nodiscard]] bst_idx_t Size() const;
 
   /*! \brief Set the base row id for this page. */
   void SetBaseRowId(std::size_t row_id) {
@@ -231,7 +231,7 @@ class EllpackPageImpl {
   /*! \brief Whether or not if the matrix is dense. */
   bool is_dense;
   /*! \brief Row length for ELLPACK. */
-  size_t row_stride;
+  bst_idx_t row_stride;
   bst_idx_t base_rowid{0};
   bst_idx_t n_rows{};
   /*! \brief global index of histogram, which is stored in ELLPACK format. */
