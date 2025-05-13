@@ -4,7 +4,7 @@ if(PLUGIN_SYCL)
   string(REPLACE " -isystem ${CONDA_PREFIX}/include" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()
 
-project(xgboost LANGUAGES CXX C VERSION 3.0.0)
+project(xgboost LANGUAGES CXX C VERSION 3.0.1)
 include(cmake/Utils.cmake)
 list(APPEND CMAKE_MODULE_PATH "${xgboost_SOURCE_DIR}/cmake/modules")
 
@@ -229,30 +229,6 @@ if(USE_CUDA)
   endif()
 
   find_package(CUDAToolkit REQUIRED)
-  find_package(CCCL CONFIG)
-  if(CCCL_FOUND)
-    message(STATUS "Standalone CCCL found.")
-  else()
-    message(STATUS "Standalone CCCL not found. Attempting to use CCCL from CUDA Toolkit...")
-    find_package(CCCL CONFIG
-      HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
-    if(NOT CCCL_FOUND)
-      message(STATUS "Could not locate CCCL from CUDA Toolkit. Using Thrust and CUB from CUDA Toolkit...")
-      find_package(libcudacxx CONFIG REQUIRED
-        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
-      find_package(CUB CONFIG REQUIRED
-        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
-      find_package(Thrust CONFIG REQUIRED
-        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
-      thrust_create_target(Thrust HOST CPP DEVICE CUDA)
-      add_library(CCCL::CCCL INTERFACE IMPORTED GLOBAL)
-      target_link_libraries(CCCL::CCCL INTERFACE libcudacxx::libcudacxx CUB::CUB Thrust)
-    endif()
-  endif()
-  # Define guard macros to prevent windows.h from conflicting with winsock2.h
-  if(WIN32)
-    target_compile_definitions(CCCL::CCCL INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN _WINSOCKAPI_)
-  endif()
 endif()
 
 if(FORCE_COLORED_OUTPUT AND (CMAKE_GENERATOR STREQUAL "Ninja") AND
@@ -338,6 +314,34 @@ if(PLUGIN_RMM)
   list(REMOVE_ITEM rmm_link_libs CUDA::cudart)
   list(APPEND rmm_link_libs CUDA::cudart_static)
   set_target_properties(rmm::rmm PROPERTIES INTERFACE_LINK_LIBRARIES "${rmm_link_libs}")
+
+  # Pick up patched CCCL from RMM
+elseif(USE_CUDA)
+  # If using CUDA and not RMM, search for CCCL.
+  find_package(CCCL CONFIG)
+  if(CCCL_FOUND)
+    message(STATUS "Standalone CCCL found.")
+  else()
+    message(STATUS "Standalone CCCL not found. Attempting to use CCCL from CUDA Toolkit...")
+    find_package(CCCL CONFIG
+      HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
+    if(NOT CCCL_FOUND)
+      message(STATUS "Could not locate CCCL from CUDA Toolkit. Using Thrust and CUB from CUDA Toolkit...")
+      find_package(libcudacxx CONFIG REQUIRED
+        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
+      find_package(CUB CONFIG REQUIRED
+        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
+      find_package(Thrust CONFIG REQUIRED
+        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
+      thrust_create_target(Thrust HOST CPP DEVICE CUDA)
+      add_library(CCCL::CCCL INTERFACE IMPORTED GLOBAL)
+      target_link_libraries(CCCL::CCCL INTERFACE libcudacxx::libcudacxx CUB::CUB Thrust)
+    endif()
+  endif()
+  # Define guard macros to prevent windows.h from conflicting with winsock2.h
+  if(WIN32)
+    target_compile_definitions(CCCL::CCCL INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN _WINSOCKAPI_)
+  endif()
 endif()
 
 if(PLUGIN_SYCL)
