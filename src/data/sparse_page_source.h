@@ -9,6 +9,7 @@
 #include <atomic>     // for atomic
 #include <cstdint>    // for uint64_t
 #include <future>     // for future
+#include <limits>     // for numeric_limits
 #include <map>        // for map
 #include <memory>     // for unique_ptr
 #include <mutex>      // for mutex
@@ -27,13 +28,15 @@
 #include "sparse_page_writer.h"     // for SparsePageFormat
 #include "xgboost/base.h"           // for bst_feature_t
 #include "xgboost/data.h"           // for SparsePage, CSCPage, SortedCSCPage
-#include "xgboost/global_config.h"  // for GlobalConfigThreadLocalStore
+#include "xgboost/global_config.h"  // for InitNewThread
 #include "xgboost/logging.h"        // for CHECK_EQ
 
 namespace xgboost::data {
 void TryDeleteCacheFile(const std::string& file);
 
 std::string MakeCachePrefix(std::string cache_prefix);
+
+auto constexpr InvalidPageSize() { return std::numeric_limits<bst_idx_t>::max(); }
 
 /**
  * @brief Information about the cache including path and page offsets.
@@ -109,12 +112,14 @@ inline void DeleteCacheFiles(std::map<std::string, std::shared_ptr<Cache>> const
                                            std::string prefix,
                                            std::map<std::string, std::shared_ptr<Cache>>* out) {
   auto& cache_info = *out;
-  auto name = MakeId(prefix, ptr);
+  auto name = MakeId(std::move(prefix), ptr);
   auto id = name + format;
   auto it = cache_info.find(id);
   if (it == cache_info.cend()) {
     cache_info[id].reset(new Cache{false, name, format, on_host});
-    LOG(INFO) << "Make cache:" << cache_info[id]->ShardName();
+    if (!on_host) {
+      LOG(INFO) << "Make cache:" << cache_info[id]->ShardName();
+    }
   }
   return id;
 }
@@ -214,12 +219,6 @@ class DefaultFormatPolicy {
   }
 };
 
-struct InitNewThread {
-  GlobalConfiguration config = *GlobalConfigThreadLocalStore::Get();
-
-  void operator()() const;
-};
-
 /**
  * @brief Base class for all page sources. Handles fetching, writing, and iteration.
  *
@@ -277,7 +276,7 @@ class SparsePageSourceImpl : public BatchIteratorImpl<S>, public FormatStreamPol
     std::int32_t n_prefetch_batches = std::min(static_cast<bst_idx_t>(n_prefetches), n_batches);
     CHECK_GT(n_prefetch_batches, 0);
     CHECK_LE(n_prefetch_batches, this->param_.n_prefetch_batches);
-    std::size_t fetch_it = count_;
+    std::size_t fetch_it = this->count_;
 
     exce_.Rethrow();
     // Clear out the existing page before loading new ones. This helps reduce memory usage
@@ -339,10 +338,12 @@ class SparsePageSourceImpl : public BatchIteratorImpl<S>, public FormatStreamPol
     auto bytes = fmt->Write(*page_, fo.get());
 
     timer.Stop();
-    // Not entirely accurate, the kernels doesn't have to flush the data.
-    LOG(INFO) << common::HumanMemUnit(bytes) << " written in " << timer.ElapsedSeconds()
-              << " seconds.";
-    cache_info_->Push(bytes);
+    if (bytes != InvalidPageSize()) {
+      // Not entirely accurate, the kernels doesn't have to flush the data.
+      LOG(INFO) << common::HumanMemUnit(bytes) << " written in " << timer.ElapsedSeconds()
+                << " seconds.";
+      cache_info_->Push(bytes);
+    }
   }
 
   virtual void Fetch() = 0;

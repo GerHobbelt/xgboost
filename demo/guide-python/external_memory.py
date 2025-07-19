@@ -14,6 +14,17 @@ See :doc:`the tutorial </tutorials/external_memory>` for more details.
 
         Added :py:class:`~xgboost.ExtMemQuantileDMatrix`.
 
+To run the example, following packages in addition to XGBoost native dependencies are
+required:
+
+- scikit-learn
+
+If `device` is `cuda`, following are also needed:
+
+- cupy
+- rmm
+- python-cuda
+
 """
 
 import argparse
@@ -60,8 +71,8 @@ class Iterator(xgboost.DataIter):
     def load_file(self) -> Tuple[np.ndarray, np.ndarray]:
         """Load a single batch of data."""
         X_path, y_path = self._file_paths[self._it]
-        # When the `ExtMemQuantileDMatrix` is used, the device must match. This
-        # constraint will be relaxed in the future.
+        # When the `ExtMemQuantileDMatrix` is used, the device must match. GPU cannot
+        # consume CPU input data and vice-versa.
         if self.device == "cpu":
             X = np.load(X_path)
             y = np.load(y_path)
@@ -81,8 +92,8 @@ class Iterator(xgboost.DataIter):
             # return False to let XGBoost know this is the end of iteration
             return False
 
-        # input_data is a function passed in by XGBoost and has the similar signature to
-        # the ``DMatrix`` constructor.
+        # input_data is a keyword-only function passed in by XGBoost and has the similar
+        # signature to the ``DMatrix`` constructor.
         X, y = self.load_file()
         input_data(data=X, label=y)
         self._it += 1
@@ -142,21 +153,35 @@ def main(tmpdir: str, args: argparse.Namespace) -> None:
     approx_train(it)
 
 
+def setup_rmm() -> None:
+    """Setup RMM for GPU-based external memory training."""
+    import rmm
+    from cuda import cudart
+    from rmm.allocators.cupy import rmm_cupy_allocator
+
+    if not xgboost.build_info()["USE_RMM"]:
+        return
+
+    # The combination of pool and async is by design. As XGBoost needs to allocate large
+    # pages repeatly, it's not easy to handle fragmentation. We can use more experiments
+    # here.
+    mr = rmm.mr.PoolMemoryResource(rmm.mr.CudaAsyncMemoryResource())
+    rmm.mr.set_current_device_resource(mr)
+    # Set the allocator for cupy as well.
+    cp.cuda.set_allocator(rmm_cupy_allocator)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     args = parser.parse_args()
     if args.device == "cuda":
         import cupy as cp
-        import rmm
-        from rmm.allocators.cupy import rmm_cupy_allocator
 
-        # It's important to use RMM for GPU-based external memory to improve performance.
-        # If XGBoost is not built with RMM support, a warning will be raised.
-        mr = rmm.mr.CudaAsyncMemoryResource()
-        rmm.mr.set_current_device_resource(mr)
-        # Set the allocator for cupy as well.
-        cp.cuda.set_allocator(rmm_cupy_allocator)
+        # It's important to use RMM with `CudaAsyncMemoryResource`. for GPU-based
+        # external memory to improve performance. If XGBoost is not built with RMM
+        # support, a warning is raised when constructing the `DMatrix`.
+        setup_rmm()
         # Make sure XGBoost is using RMM for all allocations.
         with xgboost.config_context(use_rmm=True):
             with tempfile.TemporaryDirectory() as tmpdir:

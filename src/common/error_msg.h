@@ -108,9 +108,13 @@ inline auto NoCategorical(std::string name) {
 
 inline void NoPageConcat(bool concat_pages) {
   if (concat_pages) {
-    LOG(FATAL) << "`extmem_concat_pages` must be false when there's no sampling or when it's "
+    LOG(FATAL) << "`extmem_single_page` must be false when there's no sampling or when it's "
                   "running on the CPU.";
   }
+}
+
+constexpr StringView InconsistentFeatureTypes() {
+  return "Inconsistent feature types between batches.";
 }
 }  // namespace xgboost::error
 #endif  // XGBOOST_COMMON_ERROR_MSG_H_

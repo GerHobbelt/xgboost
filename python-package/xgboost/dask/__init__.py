@@ -34,8 +34,6 @@ Optional dask configuration
 import collections
 import logging
 import platform
-import socket
-import warnings
 from collections import defaultdict
 from contextlib import contextmanager
 from functools import partial, update_wrapper
@@ -58,12 +56,17 @@ from typing import (
     Union,
 )
 
+import dask
+import distributed
 import numpy
+from dask import array as da
+from dask import bag as db
+from dask import dataframe as dd
 
 from xgboost import collective, config
 from xgboost._typing import _T, FeatureNames, FeatureTypes, IterationRange
 from xgboost.callback import TrainingCallback
-from xgboost.compat import DataFrame, LazyLoader, concat, lazy_isinstance
+from xgboost.compat import DataFrame, concat, lazy_isinstance
 from xgboost.core import (
     Booster,
     DataIter,
@@ -96,21 +99,8 @@ from xgboost.training import train as worker_train
 
 from .utils import get_n_threads
 
-if TYPE_CHECKING:
-    import dask
-    import distributed
-    from dask import array as da
-    from dask import bag as db
-    from dask import dataframe as dd
-else:
-    dd = LazyLoader("dd", globals(), "dask.dataframe")
-    da = LazyLoader("da", globals(), "dask.array")
-    db = LazyLoader("db", globals(), "dask.bag")
-    dask = LazyLoader("dask", globals(), "dask")
-    distributed = LazyLoader("distributed", globals(), "dask.distributed")
-
-_DaskCollection = Union["da.Array", "dd.DataFrame", "dd.Series"]
-_DataT = Union["da.Array", "dd.DataFrame"]  # do not use series as predictor
+_DaskCollection = Union[da.Array, dd.DataFrame, dd.Series]
+_DataT = Union[da.Array, dd.DataFrame]  # do not use series as predictor
 TrainReturnT = TypedDict(
     "TrainReturnT",
     {
@@ -209,20 +199,6 @@ def _start_tracker(
     return env
 
 
-def _assert_dask_support() -> None:
-    try:
-        import dask  # pylint: disable=W0621,W0611
-    except ImportError as e:
-        raise ImportError(
-            "Dask needs to be installed in order to use this module"
-        ) from e
-
-    if platform.system() == "Windows":
-        msg = "Windows is not officially supported for dask/xgboost,"
-        msg += " contribution are welcomed."
-        LOGGER.warning(msg)
-
-
 class CommunicatorContext(collective.CommunicatorContext):
     """A context controlling collective communicator initialization and finalization."""
 
@@ -309,7 +285,6 @@ class DaskDMatrix:
         feature_weights: Optional[_DaskCollection] = None,
         enable_categorical: bool = False,
     ) -> None:
-        _assert_dask_support()
         client = _xgb_get_client(client)
 
         self.feature_names = feature_names
@@ -683,6 +658,7 @@ class DaskQuantileDMatrix(DaskDMatrix):
         label_upper_bound: Optional[_DaskCollection] = None,
         feature_weights: Optional[_DaskCollection] = None,
         enable_categorical: bool = False,
+        max_quantile_batches: Optional[int] = None,
     ) -> None:
         super().__init__(
             client=client,
@@ -702,12 +678,14 @@ class DaskQuantileDMatrix(DaskDMatrix):
             enable_categorical=enable_categorical,
         )
         self.max_bin = max_bin
+        self.max_quantile_batches = max_quantile_batches
         self.is_quantile = True
         self._ref: Optional[int] = id(ref) if ref is not None else None
 
     def _create_fn_args(self, worker_addr: str) -> Dict[str, Any]:
         args = super()._create_fn_args(worker_addr)
         args["max_bin"] = self.max_bin
+        args["max_quantile_batches"] = self.max_quantile_batches
         if self._ref is not None:
             args["ref"] = self._ref
         return args
@@ -723,6 +701,7 @@ def _create_quantile_dmatrix(
     parts: Optional[_DataParts],
     max_bin: int,
     enable_categorical: bool,
+    max_quantile_batches: Optional[int],
     ref: Optional[DMatrix] = None,
 ) -> QuantileDMatrix:
     worker = distributed.get_worker()
@@ -737,6 +716,7 @@ def _create_quantile_dmatrix(
             max_bin=max_bin,
             ref=ref,
             enable_categorical=enable_categorical,
+            max_quantile_batches=max_quantile_batches,
         )
         return d
 
@@ -755,6 +735,7 @@ def _create_quantile_dmatrix(
         max_bin=max_bin,
         ref=ref,
         enable_categorical=enable_categorical,
+        max_quantile_batches=max_quantile_batches,
     )
     return dmatrix
 
@@ -1075,7 +1056,6 @@ def train(  # pylint: disable=unused-argument
                          'eval': {'logloss': ['0.480385', '0.357756']}}}
 
     """
-    _assert_dask_support()
     client = _xgb_get_client(client)
     args = locals()
     return client.sync(
@@ -1455,7 +1435,6 @@ def predict(  # pylint: disable=unused-argument
         shape.
 
     """
-    _assert_dask_support()
     client = _xgb_get_client(client)
     return client.sync(_predict_async, global_config=config.get_config(), **locals())
 
@@ -1578,7 +1557,6 @@ def inplace_predict(  # pylint: disable=unused-argument
         shape.
 
     """
-    _assert_dask_support()
     client = _xgb_get_client(client)
     # When used in asynchronous environment, the `client` object should have
     # `asynchronous` attribute as True.  When invoked by the skl interface, it's
@@ -1685,7 +1663,6 @@ class DaskScikitLearnBase(XGBModel):
         base_margin: Optional[_DaskCollection] = None,
         iteration_range: Optional[IterationRange] = None,
     ) -> Any:
-        _assert_dask_support()
         return self.client.sync(
             self._predict_async,
             X,
@@ -1721,7 +1698,6 @@ class DaskScikitLearnBase(XGBModel):
         X: _DataT,
         iteration_range: Optional[IterationRange] = None,
     ) -> Any:
-        _assert_dask_support()
         return self.client.sync(self._apply_async, X, iteration_range=iteration_range)
 
     def __await__(self) -> Awaitable[Any]:
@@ -1866,7 +1842,6 @@ class DaskXGBRegressor(DaskScikitLearnBase, XGBRegressorBase):
         base_margin_eval_set: Optional[Sequence[_DaskCollection]] = None,
         feature_weights: Optional[_DaskCollection] = None,
     ) -> "DaskXGBRegressor":
-        _assert_dask_support()
         args = {k: v for k, v in locals().items() if k not in ("self", "__class__")}
         return self._client_sync(self._fit_async, **args)
 
@@ -1976,7 +1951,6 @@ class DaskXGBClassifier(DaskScikitLearnBase, XGBClassifierBase):
         base_margin_eval_set: Optional[Sequence[_DaskCollection]] = None,
         feature_weights: Optional[_DaskCollection] = None,
     ) -> "DaskXGBClassifier":
-        _assert_dask_support()
         args = {k: v for k, v in locals().items() if k not in ("self", "__class__")}
         return self._client_sync(self._fit_async, **args)
 
@@ -2012,7 +1986,6 @@ class DaskXGBClassifier(DaskScikitLearnBase, XGBClassifierBase):
         base_margin: Optional[_DaskCollection] = None,
         iteration_range: Optional[IterationRange] = None,
     ) -> Any:
-        _assert_dask_support()
         return self._client_sync(
             self._predict_proba_async,
             X=X,
@@ -2165,7 +2138,6 @@ class DaskXGBRanker(DaskScikitLearnBase, XGBRankerMixIn):
         base_margin_eval_set: Optional[Sequence[_DaskCollection]] = None,
         feature_weights: Optional[_DaskCollection] = None,
     ) -> "DaskXGBRanker":
-        _assert_dask_support()
         args = {k: v for k, v in locals().items() if k not in ("self", "__class__")}
         return self._client_sync(self._fit_async, **args)
 
@@ -2228,7 +2200,6 @@ class DaskXGBRFRegressor(DaskXGBRegressor):
         base_margin_eval_set: Optional[Sequence[_DaskCollection]] = None,
         feature_weights: Optional[_DaskCollection] = None,
     ) -> "DaskXGBRFRegressor":
-        _assert_dask_support()
         args = {k: v for k, v in locals().items() if k not in ("self", "__class__")}
         _check_rf_callback(self.early_stopping_rounds, self.callbacks)
         super().fit(**args)
@@ -2289,7 +2260,6 @@ class DaskXGBRFClassifier(DaskXGBClassifier):
         base_margin_eval_set: Optional[Sequence[_DaskCollection]] = None,
         feature_weights: Optional[_DaskCollection] = None,
     ) -> "DaskXGBRFClassifier":
-        _assert_dask_support()
         args = {k: v for k, v in locals().items() if k not in ("self", "__class__")}
         _check_rf_callback(self.early_stopping_rounds, self.callbacks)
         super().fit(**args)

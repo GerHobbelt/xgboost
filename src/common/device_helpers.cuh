@@ -120,14 +120,6 @@ inline auto GetDevice(xgboost::Context const *ctx) {
   return d;
 }
 
-inline size_t TotalMemory(int device_idx) {
-  size_t device_free = 0;
-  size_t device_total = 0;
-  safe_cuda(cudaSetDevice(device_idx));
-  dh::safe_cuda(cudaMemGetInfo(&device_free, &device_total));
-  return device_total;
-}
-
 /**
  * \fn  inline int MaxSharedMemory(int device_idx)
  *
@@ -201,13 +193,6 @@ template <typename L>
 __global__ void LaunchNKernel(size_t begin, size_t end, L lambda) {
   for (auto i : GridStrideRange(begin, end)) {
     lambda(i);
-  }
-}
-template <typename L>
-__global__ void LaunchNKernel(int device_idx, size_t begin, size_t end,
-                              L lambda) {
-  for (auto i : GridStrideRange(begin, end)) {
-    lambda(i, device_idx);
   }
 }
 
