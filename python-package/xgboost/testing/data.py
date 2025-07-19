@@ -163,7 +163,7 @@ def pd_dtypes() -> Generator:
 def pd_arrow_dtypes() -> Generator:
     """Pandas DataFrame with pyarrow backed type."""
     import pandas as pd
-    import pyarrow as pa  # pylint: disable=import-error
+    import pyarrow as pa
 
     # Integer
     dtypes = pandas_pyarrow_mapper
@@ -523,7 +523,7 @@ def make_batches(  # pylint: disable=too-many-arguments,too-many-locals
     y = []
     w = []
     if use_cupy:
-        import cupy  # pylint: disable=import-error
+        import cupy
 
         rng = cupy.random.RandomState(np.uint64(random_state))
     else:
@@ -566,7 +566,7 @@ class RelDataCV(NamedTuple):
         return self.max_rel == 1
 
 
-class PBM:  # pylint: disable=too-few-public-methods
+class PBM:
     """Simulate click data with position bias model. There are other models available in
     `ULTRA <https://github.com/ULTR-Community/ULTRA.git>`_ like the cascading model.
 

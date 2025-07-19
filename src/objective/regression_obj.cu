@@ -43,6 +43,10 @@
 #include "../common/linalg_op.cuh"
 #endif  // defined(XGBOOST_USE_CUDA)
 
+#if defined(XGBOOST_USE_SYCL)
+#include "../../plugin/sycl/common/linalg_op.h"
+#endif
+
 namespace xgboost::obj {
 namespace {
 void CheckRegInputs(MetaInfo const& info, HostDeviceVector<bst_float> const& preds) {
@@ -83,6 +87,15 @@ class RegLossObj : public FitInterceptGlmLike {
           common::AssertGPUSupport();
           return false;
 #endif  // defined(XGBOOST_USE_CUDA)
+        },
+        [&] {
+#if defined(XGBOOST_USE_SYCL)
+          return sycl::linalg::Validate(ctx_->Device(), label,
+                                        [](float y) -> bool { return Loss::CheckLabel(y); });
+#else
+          common::AssertSYCLSupport();
+          return false;
+#endif  // defined(XGBOOST_USE_SYCL)
         });
     if (!valid) {
       LOG(FATAL) << Loss::LabelErrorMsg();
@@ -119,7 +132,7 @@ class RegLossObj : public FitInterceptGlmLike {
     additional_input_.HostVector().begin()[1] = is_null_weight;
 
     const size_t nthreads = ctx_->Threads();
-    bool on_device = device.IsCUDA();
+    bool on_device = !device.IsCPU();
     // On CPU we run the transformation each thread processing a contigious block of data
     // for better performance.
     const size_t n_data_blocks = std::max(static_cast<size_t>(1), (on_device ? ndata : nthreads));
@@ -253,8 +266,8 @@ class PseudoHuberRegression : public FitIntercept {
     auto predt = linalg::MakeTensorView(ctx_, &preds, info.num_row_, this->Targets(info));
 
     info.weights_.SetDevice(ctx_->Device());
-    common::OptionalWeights weight{ctx_->IsCUDA() ? info.weights_.ConstDeviceSpan()
-                                                  : info.weights_.ConstHostSpan()};
+    common::OptionalWeights weight{ctx_->IsCPU() ? info.weights_.ConstHostSpan()
+                                                 : info.weights_.ConstDeviceSpan()};
 
     linalg::ElementWiseKernel(
         ctx_, labels, [=] XGBOOST_DEVICE(std::size_t i, std::size_t j) mutable {
@@ -632,8 +645,8 @@ class MeanAbsoluteError : public ObjFunction {
     preds.SetDevice(ctx_->Device());
     auto predt = linalg::MakeTensorView(ctx_, &preds, info.num_row_, this->Targets(info));
     info.weights_.SetDevice(ctx_->Device());
-    common::OptionalWeights weight{ctx_->IsCUDA() ? info.weights_.ConstDeviceSpan()
-                                                  : info.weights_.ConstHostSpan()};
+    common::OptionalWeights weight{ctx_->IsCPU() ? info.weights_.ConstHostSpan()
+                                                 : info.weights_.ConstDeviceSpan()};
 
     linalg::ElementWiseKernel(
         ctx_, labels, [=] XGBOOST_DEVICE(std::size_t i, std::size_t j) mutable {

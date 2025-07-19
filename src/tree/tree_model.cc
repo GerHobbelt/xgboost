@@ -82,11 +82,11 @@ class TreeGenerator {
     }
     return res;
   }
-  /* \brief Find the first occurrence of key in input and replace it with corresponding
+  /* @brief Find the first occurrence of key in input and replace it with corresponding
    *        value.
    */
-  static std::string Match(std::string const& input,
-                           std::map<std::string, std::string> const& replacements) {
+  [[nodiscard]] static std::string Match(std::string const& input,
+                                         std::map<std::string, std::string> const& replacements) {
     std::string result = input;
     for (auto const& kv : replacements) {
       auto pos = result.find(kv.first);
@@ -303,9 +303,8 @@ class TextGenerator : public TreeGenerator {
     return result;
   }
 
-  std::string SplitNodeImpl(
-      RegTree const& tree, int32_t nid, std::string const& template_str,
-      std::string cond, uint32_t depth) const {
+  std::string SplitNodeImpl(RegTree const& tree, bst_node_t nid, std::string const& template_str,
+                            std::string cond, uint32_t depth) const {
     auto split_index = tree[nid].SplitIndex();
     std::string const result = SuperT::Match(
         template_str,
@@ -345,18 +344,16 @@ class TextGenerator : public TreeGenerator {
     return SplitNodeImpl(tree, nid, kNodeTemplate, ToStr(cond), depth);
   }
 
-  std::string Categorical(RegTree const &tree, int32_t nid,
-                       uint32_t depth) const override {
+  std::string Categorical(RegTree const& tree, bst_node_t nid, uint32_t depth) const override {
     auto cats = GetSplitCategories(tree, nid);
     std::string cats_str = PrintCatsAsSet(cats);
     static std::string const kNodeTemplate =
         "{tabs}{nid}:[{fname}:{cond}] yes={right},no={left},missing={missing}";
-    std::string const result =
-        SplitNodeImpl(tree, nid, kNodeTemplate, cats_str, depth);
+    std::string const result = SplitNodeImpl(tree, nid, kNodeTemplate, cats_str, depth);
     return result;
   }
 
-  std::string NodeStat(RegTree const& tree, int32_t nid) const override {
+  std::string NodeStat(RegTree const& tree, bst_node_t nid) const override {
     static std::string const kStatTemplate = ",gain={loss_chg},cover={sum_hess}";
     std::string const result = SuperT::Match(
         kStatTemplate,
@@ -671,16 +668,28 @@ class GraphvizGenerator : public TreeGenerator {
   std::string PlainNode(RegTree const& tree, bst_node_t nidx, uint32_t) const override {
     auto split_index = tree.SplitIndex(nidx);
     auto cond = tree.SplitCond(nidx);
-    static std::string const kNodeTemplate = "    {nid} [ label=\"{fname}{<}{cond}\" {params}]\n";
+    static std::string const kNodeTemplate =
+        "    {nid} [ label=\"{fname}{<}{cond}{stat}\" {params}]\n";
 
     bool has_less =
         (split_index >= fmap_.Size()) || fmap_.TypeOf(split_index) != FeatureMap::kIndicator;
-    std::string result =
-        SuperT::Match(kNodeTemplate, {{"{nid}", std::to_string(nidx)},
-                                      {"{fname}", GetFeatureName(fmap_, split_index)},
-                                      {"{<}", has_less ? "<" : ""},
-                                      {"{cond}", has_less ? ToStr(cond) : ""},
-                                      {"{params}", param_.condition_node_params}});
+    std::string result;
+    if (this->with_stats_) {
+      CHECK(!tree.IsMultiTarget()) << MTNotImplemented();
+      result = SuperT::Match(kNodeTemplate, {{"{nid}", std::to_string(nidx)},
+                                             {"{fname}", GetFeatureName(fmap_, split_index)},
+                                             {"{<}", has_less ? "<" : ""},
+                                             {"{cond}", has_less ? ToStr(cond) : ""},
+                                             {"{stat}", this->NodeStat(tree, nidx)},
+                                             {"{params}", param_.condition_node_params}});
+    } else {
+      result = SuperT::Match(kNodeTemplate, {{"{nid}", std::to_string(nidx)},
+                                             {"{fname}", GetFeatureName(fmap_, split_index)},
+                                             {"{<}", has_less ? "<" : ""},
+                                             {"{cond}", has_less ? ToStr(cond) : ""},
+                                             {"{stat}", ""},
+                                             {"{params}", param_.condition_node_params}});
+    }
 
     result += BuildEdge<false>(tree, nidx, tree.LeftChild(nidx), true);
     result += BuildEdge<false>(tree, nidx, tree.RightChild(nidx), false);
@@ -688,9 +697,15 @@ class GraphvizGenerator : public TreeGenerator {
     return result;
   };
 
-  std::string Categorical(RegTree const& tree, bst_node_t nidx, uint32_t) const override {
+  std::string NodeStat(RegTree const& tree, bst_node_t nidx) const override {
+    return Match("\ngain={gain}\ncover={cover}",
+                 {{"{cover}", std::to_string(tree.Stat(nidx).sum_hess)},
+                  {"{gain}", std::to_string(tree.Stat(nidx).loss_chg)}});
+  }
+
+  std::string Categorical(RegTree const& tree, bst_node_t nidx, uint32_t /*depth*/) const override {
     static std::string const kLabelTemplate =
-        "    {nid} [ label=\"{fname}:{cond}\" {params}]\n";
+        "    {nid} [ label=\"{fname}:{cond}{stat}\" {params}]\n";
     auto cats = GetSplitCategories(tree, nidx);
     auto cats_str = PrintCatsAsSet(cats);
     auto split_index = tree.SplitIndex(nidx);
@@ -699,6 +714,7 @@ class GraphvizGenerator : public TreeGenerator {
         SuperT::Match(kLabelTemplate, {{"{nid}", std::to_string(nidx)},
                                        {"{fname}", GetFeatureName(fmap_, split_index)},
                                        {"{cond}", cats_str},
+                                       {"{stat}", this->NodeStat(tree, nidx)},
                                        {"{params}", param_.condition_node_params}});
 
     result += BuildEdge<true>(tree, nidx, tree.LeftChild(nidx), true);
@@ -708,21 +724,31 @@ class GraphvizGenerator : public TreeGenerator {
   }
 
   std::string LeafNode(RegTree const& tree, bst_node_t nidx, uint32_t) const override {
-    static std::string const kLeafTemplate = "    {nid} [ label=\"leaf={leaf-value}\" {params}]\n";
-    // hardcoded limit to avoid dumping long arrays into dot graph.
-    bst_target_t constexpr kLimit{3};
-    if (tree.IsMultiTarget()) {
-      auto value = tree.GetMultiTargetTree()->LeafValue(nidx);
-      auto result = SuperT::Match(kLeafTemplate, {{"{nid}", std::to_string(nidx)},
-                                                  {"{leaf-value}", ToStr(value, kLimit)},
-                                                  {"{params}", param_.leaf_node_params}});
-      return result;
+    static std::string const kCoverTemplate = "\ncover={cover}";
+    static std::string const kLeafTemplate =
+        "    {nid} [ label=\"leaf={leaf-value}{cover}\" {params}]\n";
+    auto plot = [&](std::string cover) {
+      if (tree.IsMultiTarget()) {
+        auto value = tree.GetMultiTargetTree()->LeafValue(nidx);
+        // Hardcoded limit to avoid dumping long arrays into dot graph.
+        bst_target_t constexpr kLimit{3};
+        return SuperT::Match(kLeafTemplate, {{"{nid}", std::to_string(nidx)},
+                                             {"{leaf-value}", ToStr(value, kLimit)},
+                                             {"{cover}", std::move(cover)},
+                                             {"{params}", param_.leaf_node_params}});
+      } else {
+        auto value = tree[nidx].LeafValue();
+        return SuperT::Match(kLeafTemplate, {{"{nid}", std::to_string(nidx)},
+                                             {"{leaf-value}", ToStr(value)},
+                                             {"{cover}", std::move(cover)},
+                                             {"{params}", param_.leaf_node_params}});
+      }
+    };
+    if (this->with_stats_) {
+      CHECK(!tree.IsMultiTarget()) << MTNotImplemented();
+      return plot(SuperT::Match(kCoverTemplate, {{"{cover}", ToStr(tree.Stat(nidx).sum_hess)}}));
     } else {
-      auto value = tree[nidx].LeafValue();
-      auto result = SuperT::Match(kLeafTemplate, {{"{nid}", std::to_string(nidx)},
-                                                  {"{leaf-value}", ToStr(value)},
-                                                  {"{params}", param_.leaf_node_params}});
-      return result;
+      return plot("");
     }
   }
 

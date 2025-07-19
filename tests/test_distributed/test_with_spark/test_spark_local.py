@@ -4,18 +4,11 @@ import random
 import tempfile
 import uuid
 from collections import namedtuple
-from typing import Generator, Sequence, Type
+from typing import Generator, Iterable, List, Sequence
 
 import numpy as np
 import pytest
 from pyspark import SparkConf
-
-import xgboost as xgb
-from xgboost import testing as tm
-from xgboost.spark.data import pred_contribs
-
-pytestmark = [tm.timeout(60), pytest.mark.skipif(**tm.no_spark())]
-
 from pyspark.ml import Pipeline, PipelineModel
 from pyspark.ml.evaluation import BinaryClassificationEvaluator
 from pyspark.ml.feature import VectorAssembler
@@ -25,7 +18,10 @@ from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as spark_sql_func
 
+import xgboost as xgb
 from xgboost import XGBClassifier, XGBModel, XGBRegressor
+from xgboost import testing as tm
+from xgboost.collective import Config
 from xgboost.spark import (
     SparkXGBClassifier,
     SparkXGBClassifierModel,
@@ -34,10 +30,13 @@ from xgboost.spark import (
     SparkXGBRegressorModel,
 )
 from xgboost.spark.core import _non_booster_params
+from xgboost.spark.data import pred_contribs
 
 from .utils import SparkTestCase
 
 logging.getLogger("py4j").setLevel(logging.INFO)
+
+pytestmark = [tm.timeout(60), pytest.mark.skipif(**tm.no_spark())]
 
 
 def no_sparse_unwrap() -> tm.PytestSkip:
@@ -1647,17 +1646,17 @@ class XgboostLocalTest(SparkTestCase):
         with pytest.raises(ValueError, match="evals_result"):
             SparkXGBClassifier(evals_result={})
 
-    def test_tracker(self):
+    def test_collective_conf(self):
         classifier = SparkXGBClassifier(
             launch_tracker_on_driver=True,
-            tracker_host="192.168.1.32",
-            tracker_port=59981,
+            coll_cfg=Config(tracker_host_ip="192.168.1.32", tracker_port=59981),
         )
         with pytest.raises(Exception, match="Failed to bind socket"):
             classifier._get_tracker_args()
 
         classifier = SparkXGBClassifier(
-            launch_tracker_on_driver=False, tracker_host="127.0.0.1", tracker_port=58892
+            launch_tracker_on_driver=False,
+            coll_cfg=Config(tracker_host_ip="127.0.0.1", tracker_port=58892),
         )
         with pytest.raises(
             ValueError, match="You must enable launch_tracker_on_driver"
@@ -1666,14 +1665,40 @@ class XgboostLocalTest(SparkTestCase):
 
         classifier = SparkXGBClassifier(
             launch_tracker_on_driver=True,
-            tracker_host="127.0.0.1",
-            tracker_port=58892,
+            coll_cfg=Config(tracker_host_ip="127.0.0.1", tracker_port=58893),
             num_workers=2,
         )
         launch_tracker_on_driver, rabit_envs = classifier._get_tracker_args()
-        assert launch_tracker_on_driver == True
+        assert launch_tracker_on_driver is True
         assert rabit_envs["n_workers"] == 2
         assert rabit_envs["dmlc_tracker_uri"] == "127.0.0.1"
+        assert rabit_envs["dmlc_tracker_port"] == 58893
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = "file:" + tmpdir
+            classifier = SparkXGBClassifier(
+                launch_tracker_on_driver=True,
+                coll_cfg=Config(tracker_host_ip="127.0.0.1", tracker_port=58894),
+                num_workers=1,
+                n_estimators=1,
+            )
+
+            def check_conf(conf: Config) -> None:
+                assert conf.tracker_host_ip == "127.0.0.1"
+                assert conf.tracker_port == 58894
+
+            check_conf(classifier.getOrDefault(classifier.coll_cfg))
+            classifier.write().overwrite().save(path)
+
+            loaded_classifier = SparkXGBClassifier.load(path)
+            check_conf(loaded_classifier.getOrDefault(loaded_classifier.coll_cfg))
+
+            model = classifier.fit(self.cls_df_sparse_train)
+            check_conf(model.getOrDefault(model.coll_cfg))
+
+            model.write().overwrite().save(path)
+            loaded_model = SparkXGBClassifierModel.load(path)
+            check_conf(loaded_model.getOrDefault(loaded_model.coll_cfg))
 
 
 LTRData = namedtuple("LTRData", ("df_train", "df_test", "df_train_1"))
@@ -1767,3 +1792,16 @@ class TestPySparkLocalLETOR:
         assert ranker.getOrDefault(ranker.objective) == "rank:ndcg"
         model = ranker.fit(ltr_data.df_train_1)
         model.transform(ltr_data.df_test).collect()
+
+    def test_ranker_same_qid_in_same_partition(self, ltr_data: LTRData) -> None:
+        ranker = SparkXGBRanker(qid_col="qid", num_workers=4, force_repartition=True)
+        df, _ = ranker._prepare_input(ltr_data.df_train_1)
+
+        def f(iterator: Iterable) -> List[int]:
+            yield list(set(iterator))
+
+        rows = df.select("qid").rdd.mapPartitions(f).collect()
+        assert len(rows) == 4
+        for row in rows:
+            assert len(row) == 1
+            assert row[0].qid in [6, 7, 8, 9]
