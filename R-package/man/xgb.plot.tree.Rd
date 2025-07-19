@@ -29,7 +29,20 @@ splits.  When this option is on, the model dump contains two additional
 values: gain is the approximate loss function gain we get in each split;
 cover is the sum of second order gradient in each node.}
 
-\item{...}{Currently not used.}
+\item{...}{Not used.
+
+Some arguments that were part of this function in previous XGBoost versions are currently
+deprecated or have been renamed. If a deprecated or renamed argument is passed, will throw
+a warning (by default) and use its current equivalent instead. This warning will become an
+error if using the \link[=xgboost-options]{'strict mode' option}.
+
+If some additional argument is passed that is neither a current function argument nor
+a deprecated or renamed argument, a warning or error will be thrown depending on the
+'strict mode' option.
+
+\bold{Important:} \code{...} will be removed in a future version, and all the current
+deprecation warnings will become errors. Please use only arguments that form part of
+the function signature.}
 }
 \value{
 Rendered graph object which is an htmlwidget of ' class \code{grViz}. Similar to
@@ -62,24 +75,21 @@ data(agaricus.train, package = "xgboost")
 
 bst <- xgb.train(
   data = xgb.DMatrix(agaricus.train$data, agaricus.train$label),
-  max_depth = 3,
-  eta = 1,
-  nthread = 2,
   nrounds = 2,
-  objective = "binary:logistic"
+  params = xgb.params(
+    max_depth = 3,
+    nthread = 2,
+    objective = "binary:logistic"
+  )
 )
 
 # plot the first tree
 xgb.plot.tree(model = bst, tree_idx = 1)
 
-
-\dontrun{
 # Below is an example of how to save this plot to a file.
-
-library(DiagrammeR)
-
-gr <- xgb.plot.tree(model = bst, tree_idx = 1)
-htmlwidgets::saveWidget(gr, 'plot.html')
+if (require("DiagrammeR") && require("htmlwidgets")) {
+  fname <- file.path(tempdir(), "plot.html'")
+  gr <- xgb.plot.tree(bst, tree_idx = 1)
+  htmlwidgets::saveWidget(gr, fname)
 }
-
 }

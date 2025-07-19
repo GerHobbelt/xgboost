@@ -21,8 +21,12 @@ test_that("predict feature interactions works", {
   y <- f_int(X)
 
   dm <- xgb.DMatrix(X, label = y, nthread = n_threads)
-  param <- list(
-    eta = 0.1, max_depth = 4, base_score = mean(y), lambda = 0, nthread = n_threads
+  param <- xgb.params(
+    learning_rate = 0.1,
+    max_depth = 4,
+    base_score = mean(y),
+    reg_lambda = 0,
+    nthread = n_threads
   )
   b <- xgb.train(param, dm, 100)
 
@@ -123,8 +127,12 @@ test_that("multiclass feature interactions work", {
   dm <- xgb.DMatrix(
     as.matrix(iris[, -5]), label = as.numeric(iris$Species) - 1, nthread = n_threads
   )
-  param <- list(
-    eta = 0.1, max_depth = 4, objective = 'multi:softprob', num_class = 3, nthread = n_threads
+  param <- xgb.params(
+    learning_rate = 0.1,
+    max_depth = 4,
+    objective = 'multi:softprob',
+    num_class = 3,
+    nthread = n_threads
   )
   b <- xgb.train(param, dm, 40)
   pred <- predict(b, dm, outputmargin = TRUE)
@@ -152,10 +160,12 @@ test_that("SHAP single sample works", {
   test <- agaricus.test
   booster <- xgb.train(
     data = xgb.DMatrix(train$data, label = train$label),
-    max_depth = 2,
     nrounds = 4,
-    objective = "binary:logistic",
-    nthread = n_threads
+    params = xgb.params(
+      max_depth = 2,
+      objective = "binary:logistic",
+      nthread = n_threads
+    )
   )
 
   predt <- predict(

@@ -48,6 +48,12 @@ concatenated from multiple calls to the data iterator.
 For more information, see the guide 'Using XGBoost External Memory Version':
 \url{https://xgboost.readthedocs.io/en/stable/tutorials/external_memory.html}
 }
+\details{
+Be aware that construction of external data DMatrices \bold{will cache data on disk}
+in a compressed format, under the path supplied in \code{cache_prefix}.
+
+External data is not supported for the exact tree method.
+}
 \examples{
 data(mtcars)
 
@@ -108,7 +114,7 @@ cache_prefix <- tempdir()
 dm <- xgb.ExtMemDMatrix(data_iterator, cache_prefix, nthread = 1)
 
 # After construction, can be used as a regular DMatrix
-params <- list(nthread = 1, objective = "reg:squarederror")
+params <- xgb.params(nthread = 1, objective = "reg:squarederror")
 model <- xgb.train(data = dm, nrounds = 2, params = params)
 
 # Predictions can also be called on it, and should be the same

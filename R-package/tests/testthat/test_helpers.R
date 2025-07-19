@@ -25,15 +25,30 @@ if (isTRUE(VCD_AVAILABLE)) {
     label <- df[, ifelse(Improved == "Marked", 1, 0)]
 
     # binary
-    bst.Tree <- xgb.train(data = xgb.DMatrix(sparse_matrix, label = label), max_depth = 9,
-                          eta = 1, nthread = 2, nrounds = nrounds, verbose = 0,
-                          objective = "binary:logistic", booster = "gbtree",
-                          base_score = 0.5)
+    bst.Tree <- xgb.train(
+      data = xgb.DMatrix(sparse_matrix, label = label),
+      nrounds = nrounds, verbose = 0,
+      params = xgb.params(
+        max_depth = 9,
+        learning_rate = 1,
+        nthread = 2,
+        objective = "binary:logistic",
+        booster = "gbtree",
+        base_score = 0.5
+      )
+    )
 
-    bst.GLM <- xgb.train(data = xgb.DMatrix(sparse_matrix, label = label),
-                         eta = 1, nthread = 1, nrounds = nrounds, verbose = 0,
-                         objective = "binary:logistic", booster = "gblinear",
-                         base_score = 0.5)
+    bst.GLM <- xgb.train(
+      data = xgb.DMatrix(sparse_matrix, label = label),
+      nrounds = nrounds, verbose = 0,
+      params = xgb.params(
+        learning_rate = 1,
+        nthread = 1,
+        objective = "binary:logistic",
+        booster = "gblinear",
+        base_score = 0.5
+      )
+    )
 
     feature.names <- colnames(sparse_matrix)
 
@@ -45,13 +60,25 @@ if (isTRUE(VCD_AVAILABLE)) {
 # multiclass
 mlabel <- as.numeric(iris$Species) - 1
 nclass <- 3
-mbst.Tree <- xgb.train(data = xgb.DMatrix(as.matrix(iris[, -5]), label = mlabel), verbose = 0,
-                       max_depth = 3, eta = 0.5, nthread = 2, nrounds = nrounds,
-                       objective = "multi:softprob", num_class = nclass, base_score = 0)
+mbst.Tree <- xgb.train(
+  data = xgb.DMatrix(as.matrix(iris[, -5]), label = mlabel),
+  verbose = 0,
+  nrounds = nrounds,
+  params = xgb.params(
+    max_depth = 3, learning_rate = 0.5, nthread = 2,
+    objective = "multi:softprob", num_class = nclass, base_score = 0
+  )
+)
 
-mbst.GLM <- xgb.train(data = xgb.DMatrix(as.matrix(iris[, -5]), label = mlabel), verbose = 0,
-                      booster = "gblinear", eta = 0.1, nthread = 1, nrounds = nrounds,
-                      objective = "multi:softprob", num_class = nclass, base_score = 0)
+mbst.GLM <- xgb.train(
+  data = xgb.DMatrix(as.matrix(iris[, -5]), label = mlabel),
+  verbose = 0,
+  nrounds = nrounds,
+  params = xgb.params(
+    booster = "gblinear", learning_rate = 0.1, nthread = 1,
+    objective = "multi:softprob", num_class = nclass, base_score = 0
+  )
+)
 
 test_that("xgb.dump works", {
   .skip_if_vcd_not_available()
@@ -74,9 +101,17 @@ test_that("xgb.dump works for gblinear", {
   expect_length(xgb.dump(bst.GLM), 14)
   # also make sure that it works properly for a sparse model where some coefficients
   # are 0 from setting large L1 regularization:
-  bst.GLM.sp <- xgb.train(data = xgb.DMatrix(sparse_matrix, label = label), eta = 1,
-                          nthread = 2, nrounds = 1,
-                          alpha = 2, objective = "binary:logistic", booster = "gblinear")
+  bst.GLM.sp <- xgb.train(
+    data = xgb.DMatrix(sparse_matrix, label = label),
+    nrounds = 1,
+    params = xgb.params(
+      learning_rate = 1,
+      nthread = 2,
+      reg_alpha = 2,
+      objective = "binary:logistic",
+      booster = "gblinear"
+    )
+  )
   d.sp <- xgb.dump(bst.GLM.sp)
   expect_length(d.sp, 14)
   expect_gt(sum(d.sp == "0"), 0)
@@ -323,13 +358,12 @@ test_that("xgb.importance works with and without feature names", {
   imp.Tree <- xgb.importance(model = mbst.Tree)
   expect_equal(dim(imp.Tree), c(4, 4))
 
-  trees <- seq(from = 0, by = 2, length.out = 2)
+  trees <- seq(from = 1, by = 2, length.out = 2)
   importance <- xgb.importance(feature_names = feature.names, model = bst.Tree, trees = trees)
 
   importance_from_dump <- function() {
-    model_text_dump <- xgb.dump(model = bst.Tree, with_stats = TRUE, trees = trees)
     imp <- xgb.model.dt.tree(
-      text = model_text_dump,
+      model = bst.Tree,
       trees = trees
     )[
       Feature != "Leaf", .(
@@ -352,11 +386,13 @@ test_that("xgb.importance works with and without feature names", {
   expect_equal(importance_from_dump(), importance, tolerance = 1e-6)
 
   ## decision stump
-  m <- xgboost::xgb.train(
+  m <- xgb.train(
     data = xgb.DMatrix(as.matrix(data.frame(x = c(0, 1))), label = c(1, 2)),
     nrounds = 1,
-    base_score = 0.5,
-    nthread = 2
+    params = xgb.params(
+      base_score = 0.5,
+      nthread = 2
+    )
   )
   df <- xgb.model.dt.tree(model = m)
   expect_equal(df$Feature, "Leaf")
@@ -384,9 +420,16 @@ test_that("xgb.importance works with GLM model", {
 
 test_that("xgb.model.dt.tree and xgb.importance work with a single split model", {
   .skip_if_vcd_not_available()
-  bst1 <- xgb.train(data = xgb.DMatrix(sparse_matrix, label = label), max_depth = 1,
-                    eta = 1, nthread = 2, nrounds = 1, verbose = 0,
-                    objective = "binary:logistic")
+  bst1 <- xgb.train(
+    data = xgb.DMatrix(sparse_matrix, label = label),
+    nrounds = 1, verbose = 0,
+    params = xgb.params(
+      max_depth = 1,
+      learning_rate = 1,
+      nthread = 2,
+      objective = "binary:logistic"
+    )
+  )
   expect_error(dt <- xgb.model.dt.tree(model = bst1), regexp = NA) # no error
   expect_equal(nrow(dt), 3)
   expect_error(imp <- xgb.importance(model = bst1), regexp = NA) # no error
@@ -406,7 +449,7 @@ test_that("xgb.plot.importance de-duplicates features", {
 
 test_that("xgb.plot.tree works with and without feature names", {
   .skip_if_vcd_not_available()
-  expect_silent(xgb.plot.tree(feature_names = feature.names, model = bst.Tree.unnamed))
+  expect_silent(xgb.plot.tree(model = bst.Tree.unnamed))
   expect_silent(xgb.plot.tree(model = bst.Tree))
 
   ## Categorical
@@ -425,8 +468,9 @@ test_that("xgb.plot.tree works with and without feature names", {
 
 test_that("xgb.plot.multi.trees works with and without feature names", {
   .skip_if_vcd_not_available()
-  xgb.plot.multi.trees(model = bst.Tree.unnamed, feature_names = feature.names, features_keep = 3)
+  xgb.plot.multi.trees(model = bst.Tree.unnamed, features_keep = 3)
   xgb.plot.multi.trees(model = bst.Tree, features_keep = 3)
+  expect_true(TRUE)
 })
 
 test_that("xgb.plot.deepness works", {
@@ -544,18 +588,111 @@ test_that("xgb.plot.shap.summary ignores categorical features", {
 })
 
 test_that("check.deprecation works", {
-  ttt <- function(a = NNULL, DUMMY = NULL, ...) {
-    check.deprecation(...)
-    as.list((environment()))
-  }
-  res <- ttt(a = 1, DUMMY = 2, z = 3)
-  expect_equal(res, list(a = 1, DUMMY = 2))
-  expect_error(
-    res <- ttt(a = 1, dummy = 22, z = 3),
+  data(mtcars)
+  dm <- xgb.DMatrix(mtcars[, -1L], label = mtcars$mpg)
+  params <- xgb.params(nthread = 1, max_depth = 2, eval_metric = "rmse")
+  args_train <- list(
+    data = dm,
+    params = params,
+    nrounds = 10,
+    verbose = 0
   )
-  expect_error(
-    res <- ttt(a = 1, dumm = 22, z = 3),
-  )
+
+  # with exact name
+  options("xgboost.strict_mode" = TRUE)
+  expect_error({
+    model <- xgb.train(
+      data = dm,
+      params = params,
+      nrounds = 10,
+      watchlist = list(tr = dm),
+      verbose = 0
+    )
+  }, regexp = "watchlist")
+  options("xgboost.strict_mode" = FALSE)
+  expect_warning({
+    model <- xgb.train(
+      data = dm,
+      params = params,
+      nrounds = 10,
+      watchlist = list(tr = dm),
+      verbose = 0
+    )
+  }, regexp = "watchlist")
+  expect_true(hasName(attributes(model), "evaluation_log"))
+  expect_equal(names(attributes(model)$evaluation_log), c("iter", "tr_rmse"))
+
+  # with partial name match
+  expect_warning({
+    model <- xgb.train(
+      data = dm,
+      params = params,
+      nrounds = 10,
+      watchlis = list(train = dm),
+      verbose = 0
+    )
+  }, regexp = "watchlist")
+  expect_true(hasName(attributes(model), "evaluation_log"))
+  expect_equal(names(attributes(model)$evaluation_log), c("iter", "train_rmse"))
+
+  # error/warning is thrown if argument cannot be matched
+  options("xgboost.strict_mode" = TRUE)
+  expect_error({
+    model <- xgb.train(
+      data = dm,
+      params = params,
+      nrounds = 10,
+      watchlistt = list(train = dm),
+      verbose = 0
+    )
+  }, regexp = "unrecognized")
+  options("xgboost.strict_mode" = FALSE)
+  expect_warning({
+    model <- xgb.train(
+      data = dm,
+      params = params,
+      nrounds = 10,
+      watchlistt = list(train = dm),
+      verbose = 0
+    )
+  }, regexp = "unrecognized")
+
+  # error should suggest to put under 'params' if it goes there
+  options("xgboost.strict_mode" = TRUE)
+  expect_error({
+    model <- xgb.train(
+      data = dm,
+      nthread = 1, max_depth = 2, eval_metric = "rmse",
+      nrounds = 10,
+      evals = list(train = dm),
+      verbose = 0
+    )
+  }, regexp = "should be passed as a list to argument 'params'")
+  options("xgboost.strict_mode" = FALSE)
+  expect_warning({
+    model <- xgb.train(
+      data = dm,
+      nthread = 1, max_depth = 2, eval_metric = "mae",
+      nrounds = 10,
+      evals = list(train = dm),
+      verbose = 0
+    )
+  }, regexp = "should be passed as a list to argument 'params'")
+  expect_true(hasName(attributes(model), "evaluation_log"))
+  expect_equal(names(attributes(model)$evaluation_log), c("iter", "train_mae"))
+
+  # can take more than one deprecated parameter
+  expect_warning({
+    model <- xgb.train(
+      training.data = dm,
+      params = params,
+      nrounds = 10,
+      watchlis = list(tr = dm),
+      verbose = 0
+    )
+  }, regexp = "training.data")
+  expect_true(hasName(attributes(model), "evaluation_log"))
+  expect_equal(names(attributes(model)$evaluation_log), c("iter", "tr_rmse"))
 })
 
 test_that('convert.labels works', {
@@ -658,4 +795,36 @@ test_that("validate.features works as expected", {
   expect_error({
     validate.features(model, tmp)
   }, "Feature types")
+})
+
+test_that("Parameters constructor works as expected", {
+  empty_list <- list()
+  names(empty_list) <- character()
+
+  params <- xgb.params()
+  expect_equal(params, empty_list)
+
+  params <- xgb.params(max_depth = 2)
+  expect_equal(params, list(max_depth = 2))
+
+  params <- xgb.params(max_depth = NULL)
+  expect_equal(params, empty_list)
+
+  max_depth <- 3
+  params <- xgb.params(max_depth = max_depth)
+  expect_equal(params, list(max_depth = 3))
+
+  four <- 4L
+  params <- xgb.params(max_depth = four)
+  expect_equal(params, list(max_depth = 4L))
+
+  params <- xgb.params(objective = "binary:logistic", nthread = 10)
+  expect_equal(params, list(objective = "binary:logistic", nthread = 10))
+
+  expect_error({
+    xgb.params(max_xgboost = 10)
+  })
+  expect_error({
+    xgb.params(max_depth = 2, max_depth = 3)
+  })
 })

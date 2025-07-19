@@ -770,7 +770,8 @@ void MetaInfo::Extend(MetaInfo const& that, bool accumulate_rows, bool check_col
   }
 }
 
-void MetaInfo::SynchronizeNumberOfColumns(Context const* ctx) {
+void MetaInfo::SynchronizeNumberOfColumns(Context const* ctx, DataSplitMode split_mode) {
+  this->data_split_mode = split_mode;
   auto op = IsColumnSplit() ? collective::Op::kSum : collective::Op::kMax;
   auto rc = collective::Allreduce(ctx, linalg::MakeVec(&num_col_, 1), op);
   collective::SafeColl(rc);
@@ -878,8 +879,8 @@ DMatrix* TryLoadBinary(std::string fname, bool silent) {
       if (magic == data::SimpleDMatrix::kMagic) {
         DMatrix* dmat = new data::SimpleDMatrix(&is);
         if (!silent) {
-          LOG(CONSOLE) << dmat->Info().num_row_ << 'x' << dmat->Info().num_col_ << " matrix with "
-                       << dmat->Info().num_nonzero_ << " entries loaded from " << fname;
+          LOG(INFO) << dmat->Info().num_row_ << 'x' << dmat->Info().num_col_ << " matrix with "
+                    << dmat->Info().num_nonzero_ << " entries loaded from " << fname;
         }
         return dmat;
       }
@@ -993,7 +994,6 @@ INSTANTIATION_CREATE(DenseAdapter)
 INSTANTIATION_CREATE(ArrayAdapter)
 INSTANTIATION_CREATE(CSRAdapter)
 INSTANTIATION_CREATE(CSCAdapter)
-INSTANTIATION_CREATE(DataTableAdapter)
 INSTANTIATION_CREATE(FileAdapter)
 INSTANTIATION_CREATE(CSRArrayAdapter)
 INSTANTIATION_CREATE(CSCArrayAdapter)
@@ -1271,8 +1271,6 @@ template uint64_t SparsePage::Push(const data::CSRArrayAdapterBatch& batch, floa
 template uint64_t SparsePage::Push(const data::CSCArrayAdapterBatch& batch, float missing,
                                    int nthread);
 template uint64_t SparsePage::Push(const data::CSCAdapterBatch& batch, float missing, int nthread);
-template uint64_t SparsePage::Push(const data::DataTableAdapterBatch& batch, float missing,
-                                   int nthread);
 template uint64_t SparsePage::Push(const data::FileAdapterBatch& batch, float missing, int nthread);
 template uint64_t SparsePage::Push(const data::ColumnarAdapterBatch& batch, float missing,
                                    std::int32_t nthread);

@@ -59,25 +59,24 @@ dtrain <- xgb.DMatrix(
   label = 1 * (iris$Species == "versicolor"),
   nthread = nthread
 )
-param <- list(
+param <- xgb.params(
   booster = "gblinear",
   objective = "reg:logistic",
   eval_metric = "auc",
-  lambda = 0.0003,
-  alpha = 0.0003,
+  reg_lambda = 0.0003,
+  reg_alpha = 0.0003,
   nthread = nthread
 )
 
-# For 'shotgun', which is a default linear updater, using high eta values may result in
+# For 'shotgun', which is a default linear updater, using high learning_rate values may result in
 # unstable behaviour in some datasets. With this simple dataset, however, the high learning
 # rate does not break the convergence, but allows us to illustrate the typical pattern of
 # "stochastic explosion" behaviour of this lock-free algorithm at early boosting iterations.
 bst <- xgb.train(
-  param,
+  c(param, list(learning_rate = 1.)),
   dtrain,
-  list(tr = dtrain),
+  evals = list(tr = dtrain),
   nrounds = 200,
-  eta = 1.,
   callbacks = list(xgb.cb.gblinear.history())
 )
 
@@ -88,28 +87,39 @@ matplot(coef_path, type = "l")
 # With the deterministic coordinate descent updater, it is safer to use higher learning rates.
 # Will try the classical componentwise boosting which selects a single best feature per round:
 bst <- xgb.train(
-  param,
+  c(
+    param,
+    xgb.params(
+      learning_rate = 0.8,
+      updater = "coord_descent",
+      feature_selector = "thrifty",
+      top_k = 1
+    )
+  ),
   dtrain,
-  list(tr = dtrain),
+  evals = list(tr = dtrain),
   nrounds = 200,
-  eta = 0.8,
-  updater = "coord_descent",
-  feature_selector = "thrifty",
-  top_k = 1,
   callbacks = list(xgb.cb.gblinear.history())
 )
 matplot(xgb.gblinear.history(bst), type = "l")
 #  Componentwise boosting is known to have similar effect to Lasso regularization.
-# Try experimenting with various values of top_k, eta, nrounds,
+# Try experimenting with various values of top_k, learning_rate, nrounds,
 # as well as different feature_selectors.
 
 # For xgb.cv:
 bst <- xgb.cv(
-  param,
+  c(
+    param,
+    xgb.params(
+      learning_rate = 0.8,
+      updater = "coord_descent",
+      feature_selector = "thrifty",
+      top_k = 1
+    )
+  ),
   dtrain,
   nfold = 5,
   nrounds = 100,
-  eta = 0.8,
   callbacks = list(xgb.cb.gblinear.history())
 )
 # coefficients in the CV fold #3
@@ -119,23 +129,22 @@ matplot(xgb.gblinear.history(bst)[[3]], type = "l")
 #### Multiclass classification:
 dtrain <- xgb.DMatrix(scale(x), label = as.numeric(iris$Species) - 1, nthread = nthread)
 
-param <- list(
+param <- xgb.params(
   booster = "gblinear",
   objective = "multi:softprob",
   num_class = 3,
-  lambda = 0.0003,
-  alpha = 0.0003,
+  reg_lambda = 0.0003,
+  reg_alpha = 0.0003,
   nthread = nthread
 )
 
 # For the default linear updater 'shotgun' it sometimes is helpful
-# to use smaller eta to reduce instability
+# to use smaller learning_rate to reduce instability
 bst <- xgb.train(
-  param,
+  c(param, list(learning_rate = 0.5)),
   dtrain,
-  list(tr = dtrain),
+  evals = list(tr = dtrain),
   nrounds = 50,
-  eta = 0.5,
   callbacks = list(xgb.cb.gblinear.history())
 )
 
@@ -146,11 +155,10 @@ matplot(xgb.gblinear.history(bst, class_index = 2), type = "l")
 
 # CV:
 bst <- xgb.cv(
-  param,
+  c(param, list(learning_rate = 0.5)),
   dtrain,
   nfold = 5,
   nrounds = 70,
-  eta = 0.5,
   callbacks = list(xgb.cb.gblinear.history(FALSE))
 )
 # 1st fold of 1st class

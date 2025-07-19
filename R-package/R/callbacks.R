@@ -61,7 +61,7 @@
 #'   will be the same as parameter `begin_iteration`, then next one will add +1, and so on).
 #'
 #' - iter_feval Evaluation metrics for `evals` that were supplied, either
-#'   determined by the objective, or by parameter `feval`.
+#'   determined by the objective, or by parameter `custom_metric`.
 #'
 #'   For [xgb.train()], this will be a named vector with one entry per element in
 #'   `evals`, where the names are determined as 'evals name' + '-' + 'metric name' - for
@@ -204,10 +204,9 @@
 #' dm <- xgb.DMatrix(x, label = y, nthread = 1)
 #' model <- xgb.train(
 #'   data = dm,
-#'   params = list(objective = "reg:squarederror", nthread = 1),
+#'   params = xgb.params(objective = "reg:squarederror", nthread = 1),
 #'   nrounds = 5,
-#'   callbacks = list(ssq_callback),
-#'   keep_extra_attributes = TRUE
+#'   callbacks = list(ssq_callback)
 #' )
 #'
 #' # Result from 'f_after_iter' will be available as an attribute
@@ -451,7 +450,7 @@ xgb.cb.print.evaluation <- function(period = 1, showsd = TRUE) {
 #' Callback for logging the evaluation history
 #'
 #' @details This callback creates a table with per-iteration evaluation metrics (see parameters
-#' `evals` and `feval` in [xgb.train()]).
+#' `evals` and `custom_metric` in [xgb.train()]).
 #'
 #' Note: in the column names of the final data.table, the dash '-' character is replaced with
 #' the underscore '_' in order to make the column names more like regular R identifiers.
@@ -563,7 +562,7 @@ xgb.cb.reset.parameters <- function(new_params) {
       }
     },
     f_before_iter = function(env, model, data, evals, iteration) {
-      pars <- lapply(env$new_params, function(p) {
+      params <- lapply(env$new_params, function(p) {
         if (is.function(p)) {
           return(p(iteration, env$end_iteration))
         } else {
@@ -572,10 +571,10 @@ xgb.cb.reset.parameters <- function(new_params) {
       })
 
       if (inherits(model, "xgb.Booster")) {
-        xgb.parameters(model) <- pars
+        xgb.model.parameters(model) <- params
       } else {
         for (fd in model) {
-          xgb.parameters(fd$bst) <- pars
+          xgb.model.parameters(fd$bst) <- params
         }
       }
       return(FALSE)
@@ -957,25 +956,24 @@ xgb.cb.cv.predict <- function(save_models = FALSE, outputmargin = FALSE) {
 #'   label = 1 * (iris$Species == "versicolor"),
 #'   nthread = nthread
 #' )
-#' param <- list(
+#' param <- xgb.params(
 #'   booster = "gblinear",
 #'   objective = "reg:logistic",
 #'   eval_metric = "auc",
-#'   lambda = 0.0003,
-#'   alpha = 0.0003,
+#'   reg_lambda = 0.0003,
+#'   reg_alpha = 0.0003,
 #'   nthread = nthread
 #' )
 #'
-#' # For 'shotgun', which is a default linear updater, using high eta values may result in
+#' # For 'shotgun', which is a default linear updater, using high learning_rate values may result in
 #' # unstable behaviour in some datasets. With this simple dataset, however, the high learning
 #' # rate does not break the convergence, but allows us to illustrate the typical pattern of
 #' # "stochastic explosion" behaviour of this lock-free algorithm at early boosting iterations.
 #' bst <- xgb.train(
-#'   param,
+#'   c(param, list(learning_rate = 1.)),
 #'   dtrain,
-#'   list(tr = dtrain),
+#'   evals = list(tr = dtrain),
 #'   nrounds = 200,
-#'   eta = 1.,
 #'   callbacks = list(xgb.cb.gblinear.history())
 #' )
 #'
@@ -986,28 +984,39 @@ xgb.cb.cv.predict <- function(save_models = FALSE, outputmargin = FALSE) {
 #' # With the deterministic coordinate descent updater, it is safer to use higher learning rates.
 #' # Will try the classical componentwise boosting which selects a single best feature per round:
 #' bst <- xgb.train(
-#'   param,
+#'   c(
+#'     param,
+#'     xgb.params(
+#'       learning_rate = 0.8,
+#'       updater = "coord_descent",
+#'       feature_selector = "thrifty",
+#'       top_k = 1
+#'     )
+#'   ),
 #'   dtrain,
-#'   list(tr = dtrain),
+#'   evals = list(tr = dtrain),
 #'   nrounds = 200,
-#'   eta = 0.8,
-#'   updater = "coord_descent",
-#'   feature_selector = "thrifty",
-#'   top_k = 1,
 #'   callbacks = list(xgb.cb.gblinear.history())
 #' )
 #' matplot(xgb.gblinear.history(bst), type = "l")
 #' #  Componentwise boosting is known to have similar effect to Lasso regularization.
-#' # Try experimenting with various values of top_k, eta, nrounds,
+#' # Try experimenting with various values of top_k, learning_rate, nrounds,
 #' # as well as different feature_selectors.
 #'
 #' # For xgb.cv:
 #' bst <- xgb.cv(
-#'   param,
+#'   c(
+#'     param,
+#'     xgb.params(
+#'       learning_rate = 0.8,
+#'       updater = "coord_descent",
+#'       feature_selector = "thrifty",
+#'       top_k = 1
+#'     )
+#'   ),
 #'   dtrain,
 #'   nfold = 5,
 #'   nrounds = 100,
-#'   eta = 0.8,
 #'   callbacks = list(xgb.cb.gblinear.history())
 #' )
 #' # coefficients in the CV fold #3
@@ -1017,23 +1026,22 @@ xgb.cb.cv.predict <- function(save_models = FALSE, outputmargin = FALSE) {
 #' #### Multiclass classification:
 #' dtrain <- xgb.DMatrix(scale(x), label = as.numeric(iris$Species) - 1, nthread = nthread)
 #'
-#' param <- list(
+#' param <- xgb.params(
 #'   booster = "gblinear",
 #'   objective = "multi:softprob",
 #'   num_class = 3,
-#'   lambda = 0.0003,
-#'   alpha = 0.0003,
+#'   reg_lambda = 0.0003,
+#'   reg_alpha = 0.0003,
 #'   nthread = nthread
 #' )
 #'
 #' # For the default linear updater 'shotgun' it sometimes is helpful
-#' # to use smaller eta to reduce instability
+#' # to use smaller learning_rate to reduce instability
 #' bst <- xgb.train(
-#'   param,
+#'   c(param, list(learning_rate = 0.5)),
 #'   dtrain,
-#'   list(tr = dtrain),
+#'   evals = list(tr = dtrain),
 #'   nrounds = 50,
-#'   eta = 0.5,
 #'   callbacks = list(xgb.cb.gblinear.history())
 #' )
 #'
@@ -1044,11 +1052,10 @@ xgb.cb.cv.predict <- function(save_models = FALSE, outputmargin = FALSE) {
 #'
 #' # CV:
 #' bst <- xgb.cv(
-#'   param,
+#'   c(param, list(learning_rate = 0.5)),
 #'   dtrain,
 #'   nfold = 5,
 #'   nrounds = 70,
-#'   eta = 0.5,
 #'   callbacks = list(xgb.cb.gblinear.history(FALSE))
 #' )
 #' # 1st fold of 1st class

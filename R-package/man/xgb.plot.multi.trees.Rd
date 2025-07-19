@@ -26,7 +26,20 @@ The values are passed to \code{DiagrammeR::render_graph()}.}
 
 \item{render}{Should the graph be rendered or not? The default is \code{TRUE}.}
 
-\item{...}{Currently not used.}
+\item{...}{Not used.
+
+Some arguments that were part of this function in previous XGBoost versions are currently
+deprecated or have been renamed. If a deprecated or renamed argument is passed, will throw
+a warning (by default) and use its current equivalent instead. This warning will become an
+error if using the \link[=xgboost-options]{'strict mode' option}.
+
+If some additional argument is passed that is neither a current function argument nor
+a deprecated or renamed argument, a warning or error will be thrown depending on the
+'strict mode' option.
+
+\bold{Important:} \code{...} will be removed in a future version, and all the current
+deprecation warnings will become errors. Please use only arguments that form part of
+the function signature.}
 }
 \value{
 Rendered graph object which is an htmlwidget of ' class \code{grViz}. Similar to
@@ -37,6 +50,9 @@ line.
 Visualization of the ensemble of trees as a single collective unit.
 }
 \details{
+Note that this function does not work with models that were fitted to
+categorical data.
+
 This function tries to capture the complexity of a gradient boosted tree model
 in a cohesive way by compressing an ensemble of trees into a single tree-graph representation.
 The goal is to improve the interpretability of a model generally seen as black box.
@@ -64,27 +80,24 @@ data.table::setDTthreads(nthread)
 
 bst <- xgb.train(
   data = xgb.DMatrix(agaricus.train$data, label = agaricus.train$label),
-  max_depth = 15,
-  eta = 1,
-  nthread = nthread,
   nrounds = 30,
-  objective = "binary:logistic",
-  min_child_weight = 50,
-  verbose = 0
+  verbose = 0,
+  params = xgb.params(
+    max_depth = 15,
+    learning_rate = 1,
+    nthread = nthread,
+    objective = "binary:logistic",
+    min_child_weight = 50
+  )
 )
 
 p <- xgb.plot.multi.trees(model = bst, features_keep = 3)
 print(p)
 
-\dontrun{
 # Below is an example of how to save this plot to a file.
-# Note that for export_graph() to work, the {DiagrammeRsvg} and {rsvg} packages
-# must also be installed.
-
-library(DiagrammeR)
-
-gr <- xgb.plot.multi.trees(model = bst, features_keep = 3, render = FALSE)
-export_graph(gr, "tree.pdf", width = 1500, height = 600)
+if (require("DiagrammeR") && require("DiagrammeRsvg") && require("rsvg")) {
+  fname <- file.path(tempdir(), "tree.pdf")
+  gr <- xgb.plot.multi.trees(bst, features_keep = 3, render = FALSE)
+  export_graph(gr, fname, width = 1500, height = 600)
 }
-
 }

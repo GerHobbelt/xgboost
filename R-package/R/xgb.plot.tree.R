@@ -29,7 +29,7 @@
 #'   splits.  When this option is on, the model dump contains two additional
 #'   values: gain is the approximate loss function gain we get in each split;
 #'   cover is the sum of second order gradient in each node.
-#' @param ... Currently not used.
+#' @inheritParams xgb.train
 #' @return
 #'
 #' Rendered graph object which is an htmlwidget of ' class `grViz`. Similar to
@@ -41,33 +41,30 @@
 #'
 #' bst <- xgb.train(
 #'   data = xgb.DMatrix(agaricus.train$data, agaricus.train$label),
-#'   max_depth = 3,
-#'   eta = 1,
-#'   nthread = 2,
 #'   nrounds = 2,
-#'   objective = "binary:logistic"
+#'   params = xgb.params(
+#'     max_depth = 3,
+#'     nthread = 2,
+#'     objective = "binary:logistic"
+#'   )
 #' )
 #'
 #' # plot the first tree
 #' xgb.plot.tree(model = bst, tree_idx = 1)
 #'
-#'
-#' \dontrun{
 #' # Below is an example of how to save this plot to a file.
-#'
-#' library(DiagrammeR)
-#'
-#' gr <- xgb.plot.tree(model = bst, tree_idx = 1)
-#' htmlwidgets::saveWidget(gr, 'plot.html')
+#' if (require("DiagrammeR") && require("htmlwidgets")) {
+#'   fname <- file.path(tempdir(), "plot.html'")
+#'   gr <- xgb.plot.tree(bst, tree_idx = 1)
+#'   htmlwidgets::saveWidget(gr, fname)
 #' }
-#'
 #' @export
 xgb.plot.tree <- function(model,
                           tree_idx = 1,
                           plot_width = NULL,
                           plot_height = NULL,
                           with_stats = FALSE, ...) {
-  check.deprecation(...)
+  check.deprecation(deprecated_plottree_params, match.call(), ...)
   if (!inherits(model, "xgb.Booster")) {
     stop("model has to be an object of the class xgb.Booster")
   }
