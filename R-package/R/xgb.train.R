@@ -1,8 +1,22 @@
-#' eXtreme Gradient Boosting Training
+#' @title Fit XGBoost Model
+#' @description Fits an XGBoost model to given data in DMatrix format (e.g. as produced by [xgb.DMatrix()]).
+#' See the tutorial [Introduction to Boosted Trees](https://xgboost.readthedocs.io/en/stable/tutorials/model.html)
+#' for a longer explanation of what XGBoost does, and the rest of the
+#' [XGBoost Tutorials](https://xgboost.readthedocs.io/en/latest/tutorials/index.html) for further
+#' explanations XGBoost's features and usage.
 #'
-#' `xgb.train()` is an advanced interface for training an xgboost model.
-#' The [xgboost()] function is a simpler wrapper for `xgb.train()`.
+#' Compared to function [xgboost()] which is a user-friendly function targeted towards interactive
+#' usage, ``xgb.train`` is a lower-level interface which allows finer-grained control and exposes
+#' further functionalities offered by the core library (such as learning-to-rank objectives), but
+#' which works exclusively with XGBoost's own data format ("DMatrices") instead of with regular R
+#' objects.
 #'
+#' The syntax of this function closely mimics the same function from the Python package for XGBoost,
+#' and is recommended to use for package developers over `xgboost()` as it will provide a more
+#' stable interface (with fewer breaking changes) and lower overhead from data validations.
+#'
+#' See also the [migration guide](https://xgboost.readthedocs.io/en/latest/R-package/migration_guide.html)
+#' if coming from a previous version of XGBoost in the 1.x series.
 #' @param params List of XGBoost parameters which control the model building process.
 #' See the [online documentation](http://xgboost.readthedocs.io/en/latest/parameter.html)
 #' and the documentation for [xgb.params()] for details.
@@ -409,7 +423,8 @@ xgb.train <- function(params = xgb.params(), data, nrounds, evals = list(),
 #' If passing `NULL` for a given parameter (the default for all of them), then the default
 #' value for that parameter will be used. Default values are automatically determined by the
 #' XGBoost core library upon calls to [xgb.train()] or [xgb.cv()], and are subject to change
-#' over XGBoost library versions.
+#' over XGBoost library versions. Some of them might differ according to the
+#' booster type (e.g. defaults for regularization are different for linear and tree-based boosters).
 #' @return A list with the entries that were passed non-NULL values. It is intended to
 #' be passed as argument `params` to [xgb.train()] or [xgb.cv()].
 #' @export

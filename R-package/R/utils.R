@@ -139,8 +139,24 @@ check.custom.obj <- function(params, objective) {
   if (!is.null(params[['objective']]) && !is.null(objective))
     stop("Setting objectives in 'params' and 'objective' at the same time is not allowed")
 
-  if (!is.null(objective) && typeof(objective) != 'closure')
+  if (!is.null(objective) && typeof(objective) != 'closure') {
+    if (is.character(objective)) {
+      msg <- paste(
+        "Argument 'objective' is only for custom objectives.",
+        "For built-in objectives, pass the objective under 'params'.",
+        sep = " "
+      )
+      error_on_deprecated <- getOption("xgboost.strict_mode", default = FALSE)
+      if (error_on_deprecated) {
+        stop(msg)
+      } else {
+        warning(msg, " This warning will become an error in a future version.")
+      }
+      params$objective <- objective
+      return(list(params = params, objective = NULL))
+    }
     stop("'objective' must be a function")
+  }
 
   # handle the case when custom objective function was provided through params
   if (!is.null(params[['objective']]) &&
@@ -392,25 +408,6 @@ xgb.createFolds <- function(y, k) {
   out
 }
 
-
-#
-# Deprectaion notice utilities ------------------------------------------------
-#
-
-#' Deprecation notices.
-#'
-#' At this time, some of the parameter names were changed in order to make the code style more uniform.
-#' The deprecated parameters would be removed in the next release.
-#'
-#' To see all the current deprecated and new parameters, check the `xgboost:::depr_par_lut` table.
-#'
-#' A deprecation warning is shown when any of the deprecated parameters is used in a call.
-#' An additional warning is shown when there was a partial match to a deprecated parameter
-#' (as R is able to partially match parameter names).
-#'
-#' @name xgboost-deprecated
-NULL
-
 #' Model Serialization and Compatibility
 #'
 #' @description
@@ -560,6 +557,31 @@ deprecated_train_params <- list(
   ),
   removed = character()
 )
+deprecated_cv_params <- deprecated_train_params
+deprecated_cv_params$removed <- 'label'
+deprecated_xgboost_params <- list(
+  renamed = list(
+    'data' = 'x',
+    'label' = 'y',
+    'eta' = 'learning_rate',
+    'gamma' = 'min_split_loss',
+    'lambda' = 'reg_lambda',
+    'alpha' = 'reg_alpha',
+    'min.split.loss' = 'min_split_loss',
+    'reg.lambda' = 'reg_lambda',
+    'reg.alpha' = 'reg_alpha',
+    'watchlist' = 'evals'
+  ),
+  removed = c(
+    'params',
+    'save_period',
+    'save_name',
+    'xgb_model',
+    'callbacks',
+    'missing',
+    'maximize'
+  )
+)
 deprecated_dttree_params <- list(
   renamed = list('n_first_tree' = 'trees'),
   removed = c("feature_names", "text")
@@ -594,6 +616,13 @@ deprecated_predict_params <- list(
   renamed = list("ntreelimit" = "iterationrange"),
   removed = "reshape"
 )
+deprecated_dmatrix_params <- list(
+  renamed = character(),
+  removed = "info"
+)
+
+# These got moved from 'info' to function arguments
+args_previous_dmatrix_info <- c("label", "weight", "base_margin", "group")
 
 # Checks the dot-parameters for deprecated names
 # (including partial matching), gives a deprecation warning,
@@ -624,7 +653,12 @@ check.deprecation <- function(
   }
   list_renamed <- deprecated_list$renamed
   list_removed <- deprecated_list$removed
-  has_params_arg <- list_renamed[[1L]] == deprecated_train_params$renamed[[1L]]
+  has_params_arg <-
+    length(list_renamed) == length(deprecated_train_params$renamed) &&
+    list_renamed[[1L]] == deprecated_train_params$renamed[[1L]]
+  is_dmatrix_constructor <-
+    length(list_removed) == length(deprecated_dmatrix_params$removed) &&
+    list_removed[[1L]] == deprecated_dmatrix_params$removed[[1L]]
   all_match <- pmatch(names(params), names(list_renamed))
   # throw error on unrecognized parameters
   if (!allow_unrecognized && anyNA(all_match)) {
@@ -662,6 +696,25 @@ check.deprecation <- function(
         }
         names_unrecognized <- setdiff(names_unrecognized, names_under_params)
       }
+    } else if (is_dmatrix_constructor && NROW(params$info)) {
+      # same thing for the earlier 'info' in 'xgb.DMatrix'
+      throw_err_or_depr_msg(
+        "Passed invalid argument 'info' - entries on it should be passed as direct arguments."
+      )
+      entries_info <- names(params$info)
+      if (length(setdiff(entries_info, args_previous_dmatrix_info))) {
+        stop(
+          "Passed unrecognized entries under info: ",
+          paste(setdiff(entries_info, args_previous_dmatrix_info) |> head(), collapse = ", ")
+        )
+      }
+      for (entry_name in entries_info) {
+        if (!is.null(env[[entry_name]])) {
+          stop("Passed entry under both 'info' and function argument(s): ", entry_name)
+        }
+        env[[entry_name]] <- params$info[[entry_name]]
+      }
+      names_unrecognized <- setdiff(names_unrecognized, "info")
     }
 
     # check for parameters that were removed from a previous version
@@ -678,7 +731,7 @@ check.deprecation <- function(
     if (length(names_unrecognized)) {
       throw_err_or_depr_msg(
         "Passed unrecognized parameters: ",
-        paste(head(names_unrecognized), collapse = ", ")
+        paste(head(names_unrecognized), collapse = ", "), "."
       )
     }
 
