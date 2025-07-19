@@ -49,7 +49,7 @@ class XGBoostJNI {
     }
   }
 
-  public final static native String XGBGetLastError();
+  public final static native String XGBGetLastError(void);
 
   public final static native int XGDMatrixCreateFromFile(String fname, int silent, long[] out);
 

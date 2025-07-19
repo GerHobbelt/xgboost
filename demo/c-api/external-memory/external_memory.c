@@ -160,7 +160,7 @@ void TrainModel(DMatrix Xy) {
   safe_xgboost(XGBoosterFree(booster));
 }
 
-int main() {
+int main(void) {
   DataIter iter;
   DataIterator_Init(&iter, BATCH_LEN, N_BATCHS);
 

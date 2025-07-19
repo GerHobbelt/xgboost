@@ -81,7 +81,7 @@ XGB_DLL int XGBuildInfo(char const **out);
  *  this function is thread safe and can be called by different thread
  * \return const char* error information
  */
-XGB_DLL const char *XGBGetLastError();
+XGB_DLL const char *XGBGetLastError(void);
 
 /*!
  * \brief register callback function for LOG(INFO) messages -- helpful messages

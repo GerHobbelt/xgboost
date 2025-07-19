@@ -109,7 +109,7 @@ void Matrix_Free(Matrix self) {
   }
 }
 
-int main() {
+int main(void) {
   Matrix X;
   Matrix y;
 
@@ -188,7 +188,7 @@ int main() {
 
     if (out_dim != 2 || out_shape[0] != N_SAMPLES || out_shape[1] != 1) {
       fprintf(stderr,
-              "Regression model should output prediction as vector, %lu, %lu",
+              "Regression model should output prediction as vector, %I64u, %I64u",
               out_dim, out_shape[0]);
       exit(-1);
     }

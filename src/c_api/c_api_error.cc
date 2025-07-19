@@ -18,7 +18,7 @@ struct XGBAPIErrorEntry {
 
 using XGBAPIErrorStore = dmlc::ThreadLocalStore<XGBAPIErrorEntry>;
 
-XGB_DLL const char* XGBGetLastError() { return XGBAPIErrorStore::Get()->last_error.c_str(); }
+XGB_DLL const char* XGBGetLastError(void) { return XGBAPIErrorStore::Get()->last_error.c_str(); }
 
 void XGBAPISetLastError(const char* msg) {
   XGBAPIErrorStore::Get()->last_error = msg;

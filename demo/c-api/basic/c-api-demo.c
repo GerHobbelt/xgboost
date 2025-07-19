@@ -36,7 +36,7 @@ static void MakeConfig(int n_threads, size_t length, char* out) {
   sprintf(out, kTemplate, n_threads);
 }
 
-int main() {
+int main(void) {
   int silent = 0;
   int use_gpu = 0;  // set to 1 to use the GPU for training
 
