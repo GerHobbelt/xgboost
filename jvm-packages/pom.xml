@@ -6,7 +6,7 @@
 
     <groupId>ml.dmlc</groupId>
     <artifactId>xgboost-jvm_2.12</artifactId>
-    <version>3.0.0-SNAPSHOT</version>
+    <version>3.1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>XGBoost JVM Package</name>
     <description>JVM Package for XGBoost</description>
@@ -57,6 +57,9 @@
         <log.capi.invocation>OFF</log.capi.invocation>
         <use.cuda>OFF</use.cuda>
         <use.openmp>ON</use.openmp>
+        <use.debug>OFF</use.debug>
+        <use.nvtx>OFF</use.nvtx>
+        <plugin.rmm>OFF</plugin.rmm>
         <cudf.version>24.10.0</cudf.version>
         <spark.rapids.version>24.10.0</spark.rapids.version>
         <spark.rapids.classifier>cuda12</spark.rapids.classifier>

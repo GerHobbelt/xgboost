@@ -4,7 +4,7 @@ if(PLUGIN_SYCL)
   string(REPLACE " -isystem ${CONDA_PREFIX}/include" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()
 
-project(xgboost LANGUAGES CXX C VERSION 3.0.0)
+project(xgboost LANGUAGES CXX C VERSION 3.1.0)
 include(cmake/Utils.cmake)
 list(APPEND CMAKE_MODULE_PATH "${xgboost_SOURCE_DIR}/cmake/modules")
 
@@ -112,10 +112,19 @@ option(ADD_PKGCONFIG "Add xgboost.pc into system." ON)
 if(USE_DEBUG_OUTPUT AND (NOT (CMAKE_BUILD_TYPE MATCHES Debug)))
   message(SEND_ERROR "Do not enable `USE_DEBUG_OUTPUT' with release build.")
 endif()
-if(USE_NCCL AND NOT (USE_CUDA))
+if(USE_NVTX AND (NOT USE_CUDA))
+  message(SEND_ERROR "`USE_NVTX` must be enabled with `USE_CUDA` flag.")
+endif()
+if(USE_NVTX)
+  if(CMAKE_VERSION VERSION_LESS "3.25.0")
+    # CUDA:nvtx3 target is added in 3.25
+    message("cmake >= 3.25 is required for NVTX.")
+  endif()
+endif()
+if(USE_NCCL AND (NOT USE_CUDA))
   message(SEND_ERROR "`USE_NCCL` must be enabled with `USE_CUDA` flag.")
 endif()
-if(USE_DEVICE_DEBUG AND NOT (USE_CUDA))
+if(USE_DEVICE_DEBUG AND (NOT USE_CUDA))
   message(SEND_ERROR "`USE_DEVICE_DEBUG` must be enabled with `USE_CUDA` flag.")
 endif()
 if(BUILD_WITH_SHARED_NCCL AND (NOT USE_NCCL))
@@ -135,6 +144,9 @@ if(R_LIB AND GOOGLE_TEST)
     WARNING
     "Some C++ tests will fail with `R_LIB` enabled, as R package redirects some functions to R runtime implementation."
   )
+endif()
+if(R_LIB AND USE_NCCL)
+  message(SEND_ERROR "`R_LIB` doesn't support distributed computing with NCCL yet.")
 endif()
 if(PLUGIN_RMM AND NOT (USE_CUDA))
   message(SEND_ERROR "`PLUGIN_RMM` must be enabled with `USE_CUDA` flag.")
@@ -220,30 +232,6 @@ if(USE_CUDA)
   endif()
 
   find_package(CUDAToolkit REQUIRED)
-  find_package(CCCL CONFIG)
-  if(CCCL_FOUND)
-    message(STATUS "Standalone CCCL found.")
-  else()
-    message(STATUS "Standalone CCCL not found. Attempting to use CCCL from CUDA Toolkit...")
-    find_package(CCCL CONFIG
-      HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
-    if(NOT CCCL_FOUND)
-      message(STATUS "Could not locate CCCL from CUDA Toolkit. Using Thrust and CUB from CUDA Toolkit...")
-      find_package(libcudacxx CONFIG REQUIRED
-        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
-      find_package(CUB CONFIG REQUIRED
-        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
-      find_package(Thrust CONFIG REQUIRED
-        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
-      thrust_create_target(Thrust HOST CPP DEVICE CUDA)
-      add_library(CCCL::CCCL INTERFACE IMPORTED GLOBAL)
-      target_link_libraries(CCCL::CCCL INTERFACE libcudacxx::libcudacxx CUB::CUB Thrust)
-    endif()
-  endif()
-  # Define guard macros to prevent windows.h from conflicting with winsock2.h
-  if(WIN32)
-    target_compile_definitions(CCCL::CCCL INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN _WINSOCKAPI_)
-  endif()
 endif()
 
 if(FORCE_COLORED_OUTPUT AND (CMAKE_GENERATOR STREQUAL "Ninja") AND
@@ -329,6 +317,34 @@ if(PLUGIN_RMM)
   list(REMOVE_ITEM rmm_link_libs CUDA::cudart)
   list(APPEND rmm_link_libs CUDA::cudart_static)
   set_target_properties(rmm::rmm PROPERTIES INTERFACE_LINK_LIBRARIES "${rmm_link_libs}")
+
+  # Pick up patched CCCL from RMM
+elseif(USE_CUDA)
+  # If using CUDA and not RMM, search for CCCL.
+  find_package(CCCL CONFIG)
+  if(CCCL_FOUND)
+    message(STATUS "Standalone CCCL found.")
+  else()
+    message(STATUS "Standalone CCCL not found. Attempting to use CCCL from CUDA Toolkit...")
+    find_package(CCCL CONFIG
+      HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
+    if(NOT CCCL_FOUND)
+      message(STATUS "Could not locate CCCL from CUDA Toolkit. Using Thrust and CUB from CUDA Toolkit...")
+      find_package(libcudacxx CONFIG REQUIRED
+        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
+      find_package(CUB CONFIG REQUIRED
+        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
+      find_package(Thrust CONFIG REQUIRED
+        HINTS ${CUDAToolkit_LIBRARY_DIR}/cmake)
+      thrust_create_target(Thrust HOST CPP DEVICE CUDA)
+      add_library(CCCL::CCCL INTERFACE IMPORTED GLOBAL)
+      target_link_libraries(CCCL::CCCL INTERFACE libcudacxx::libcudacxx CUB::CUB Thrust)
+    endif()
+  endif()
+  # Define guard macros to prevent windows.h from conflicting with winsock2.h
+  if(WIN32)
+    target_compile_definitions(CCCL::CCCL INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN _WINSOCKAPI_)
+  endif()
 endif()
 
 if(PLUGIN_SYCL)

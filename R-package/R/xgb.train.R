@@ -18,7 +18,7 @@
 #' See also the [migration guide](https://xgboost.readthedocs.io/en/latest/R-package/migration_guide.html)
 #' if coming from a previous version of XGBoost in the 1.x series.
 #' @param params List of XGBoost parameters which control the model building process.
-#' See the [online documentation](http://xgboost.readthedocs.io/en/latest/parameter.html)
+#' See the [online documentation](https://xgboost.readthedocs.io/en/latest/parameter.html)
 #' and the documentation for [xgb.params()] for details.
 #'
 #' Should be passed as list with named entries. Parameters that are not specified in this
@@ -390,7 +390,7 @@ xgb.train <- function(params = xgb.params(), data, nrounds, evals = list(),
     call = match.call(),
     params = params
   )
-
+  bst <- xgb.reset.Booster(bst)
   curr_attrs <- attributes(bst)
   if (NROW(curr_attrs)) {
     curr_attrs <- curr_attrs[
@@ -458,8 +458,8 @@ xgb.train <- function(params = xgb.params(), data, nrounds, evals = list(),
 #' See [Survival Analysis with Accelerated Failure Time](https://xgboost.readthedocs.io/en/latest/tutorials/aft_survival_analysis.html) for details.
 #' - `"multi:softmax"`: set XGBoost to do multiclass classification using the softmax objective, you also need to set num_class(number of classes)
 #' - `"multi:softprob"`: same as softmax, but output a vector of `ndata * nclass`, which can be further reshaped to `ndata * nclass` matrix. The result contains predicted probability of each data point belonging to each class.
-#' - `"rank:ndcg"`: Use LambdaMART to perform pair-wise ranking where [Normalized Discounted Cumulative Gain (NDCG)](http://en.wikipedia.org/wiki/NDCG) is maximized. This objective supports position debiasing for click data.
-#' - `"rank:map"`: Use LambdaMART to perform pair-wise ranking where [Mean Average Precision (MAP)](http://en.wikipedia.org/wiki/Mean_average_precision#Mean_average_precision) is maximized
+#' - `"rank:ndcg"`: Use LambdaMART to perform pair-wise ranking where [Normalized Discounted Cumulative Gain (NDCG)](https://en.wikipedia.org/wiki/NDCG) is maximized. This objective supports position debiasing for click data.
+#' - `"rank:map"`: Use LambdaMART to perform pair-wise ranking where [Mean Average Precision (MAP)](https://en.wikipedia.org/wiki/Mean_average_precision#Mean_average_precision) is maximized
 #' - `"rank:pairwise"`: Use LambdaRank to perform pair-wise ranking using the `ranknet` objective.
 #' - `"reg:gamma"`: gamma regression with log-link. Output is a mean of gamma distribution. It might be useful, e.g., for modeling insurance claims severity, or for any outcome that might be [gamma-distributed](https://en.wikipedia.org/wiki/Gamma_distribution#Occurrence_and_applications).
 #' - `"reg:tweedie"`: Tweedie regression with log-link. It might be useful, e.g., for modeling total loss in insurance, or for any outcome that might be [Tweedie-distributed](https://en.wikipedia.org/wiki/Tweedie_distribution#Occurrence_and_applications).
@@ -486,7 +486,7 @@ xgb.train <- function(params = xgb.params(), data, nrounds, evals = list(),
 #' range: \eqn{[0, \infty)}
 #'
 #' Note: should only pass one of `gamma` or `min_split_loss`. Both refer to the same parameter and there's thus no difference between one or the other.
-#' @param max_depth (for Tree Booster) (default=6)
+#' @param max_depth (for Tree Booster) (default=6, type=int32)
 #' Maximum depth of a tree. Increasing this value will make the model more complex and more likely to overfit. 0 indicates no limit on depth. Beware that XGBoost aggressively consumes memory when training a deep tree. `"exact"` tree method requires non-zero value.
 #'
 #' range: \eqn{[0, \infty)}
@@ -543,7 +543,7 @@ xgb.train <- function(params = xgb.params(), data, nrounds, evals = list(),
 #'
 #' Note: should only pass one of `alpha` or `reg_alpha`. Both refer to the same parameter and there's thus no difference between one or the other.
 #' @param tree_method (for Tree Booster) (default= `"auto"`)
-#' The tree construction algorithm used in XGBoost. See description in the [reference paper](http://arxiv.org/abs/1603.02754) and [Tree Methods](https://xgboost.readthedocs.io/en/latest/treemethod.html).
+#' The tree construction algorithm used in XGBoost. See description in the [reference paper](https://arxiv.org/abs/1603.02754) and [Tree Methods](https://xgboost.readthedocs.io/en/latest/treemethod.html).
 #'
 #' Choices: `"auto"`, `"exact"`, `"approx"`, `"hist"`, this is a combination of commonly
 #' used updaters.  For other updaters like `"refresh"`, set the parameter `updater`
@@ -579,9 +579,9 @@ xgb.train <- function(params = xgb.params(), data, nrounds, evals = list(),
 #' - Choices: `"depthwise"`, `"lossguide"`
 #'   - `"depthwise"`: split at nodes closest to the root.
 #'   - `"lossguide"`: split at nodes with highest loss change.
-#' @param max_leaves (for Tree Booster) (default=0)
+#' @param max_leaves (for Tree Booster) (default=0, type=int32)
 #' Maximum number of nodes to be added.  Not used by `"exact"` tree method.
-#' @param max_bin (for Tree Booster) (default=256)
+#' @param max_bin (for Tree Booster) (default=256, type=int32)
 #' - Only used if `tree_method` is set to `"hist"` or `"approx"`.
 #' - Maximum number of discrete bins to bucket continuous features.
 #' - Increasing this number improves the optimality of splits at the cost of higher computation time.
@@ -613,16 +613,16 @@ xgb.train <- function(params = xgb.params(), data, nrounds, evals = list(),
 #' - Evaluation metrics for validation data, a default metric will be assigned according to objective (rmse for regression, and logloss for classification, `mean average precision` for ``rank:map``, etc.)
 #' - User can add multiple evaluation metrics.
 #' - The choices are listed below:
-#'   - `"rmse"`: [root mean square error](http://en.wikipedia.org/wiki/Root_mean_square_error)
+#'   - `"rmse"`: [root mean square error](https://en.wikipedia.org/wiki/Root_mean_square_error)
 #'   - `"rmsle"`: root mean square log error: \eqn{\sqrt{\frac{1}{N}[log(pred + 1) - log(label + 1)]^2}}. Default metric of `"reg:squaredlogerror"` objective. This metric reduces errors generated by outliers in dataset.  But because `log` function is employed, `"rmsle"` might output `nan` when prediction value is less than -1.  See `"reg:squaredlogerror"` for other requirements.
 #'   - `"mae"`: [mean absolute error](https://en.wikipedia.org/wiki/Mean_absolute_error)
 #'   - `"mape"`: [mean absolute percentage error](https://en.wikipedia.org/wiki/Mean_absolute_percentage_error)
 #'   - `"mphe"`: [mean Pseudo Huber error](https://en.wikipedia.org/wiki/Huber_loss). Default metric of `"reg:pseudohubererror"` objective.
-#'   - `"logloss"`: [negative log-likelihood](http://en.wikipedia.org/wiki/Log-likelihood)
+#'   - `"logloss"`: [negative log-likelihood](https://en.wikipedia.org/wiki/Log-likelihood)
 #'   - `"error"`: Binary classification error rate. It is calculated as `#(wrong cases)/#(all cases)`. For the predictions, the evaluation will regard the instances with prediction value larger than 0.5 as positive instances, and the others as negative instances.
 #'   - `"error@t"`: a different than 0.5 binary classification threshold value could be specified by providing a numerical value through 't'.
 #'   - `"merror"`: Multiclass classification error rate. It is calculated as `#(wrong cases)/#(all cases)`.
-#'   - `"mlogloss"`: [Multiclass logloss](http://scikit-learn.org/stable/modules/generated/sklearn.metrics.log_loss.html).
+#'   - `"mlogloss"`: [Multiclass logloss](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.log_loss.html).
 #'   - `"auc"`: [Receiver Operating Characteristic Area under the Curve](https://en.wikipedia.org/wiki/Receiver_operating_characteristic#Area_under_the_curve).
 #'     Available for classification and learning-to-rank tasks.
 #'     - When used with binary classification, the objective should be `"binary:logistic"` or similar functions that work on probability.
@@ -636,8 +636,8 @@ xgb.train <- function(params = xgb.params(), data, nrounds, evals = list(),
 #'     After XGBoost 1.6, both of the requirements and restrictions for using `"aucpr"` in classification problem are similar to `"auc"`.  For ranking task, only binary relevance label \eqn{y \in [0, 1]} is supported.  Different from `"map"` (mean average precision), `"aucpr"` calculates the *interpolated* area under precision recall curve using continuous interpolation.
 #'
 #'   - `"pre"`: Precision at \eqn{k}. Supports only learning to rank task.
-#'   - `"ndcg"`: [Normalized Discounted Cumulative Gain](http://en.wikipedia.org/wiki/NDCG)
-#'   - `"map"`: [Mean Average Precision](http://en.wikipedia.org/wiki/Mean_average_precision#Mean_average_precision)
+#'   - `"ndcg"`: [Normalized Discounted Cumulative Gain](https://en.wikipedia.org/wiki/NDCG)
+#'   - `"map"`: [Mean Average Precision](https://en.wikipedia.org/wiki/Mean_average_precision#Mean_average_precision)
 #'
 #'     The `average precision` is defined as:
 #'
@@ -769,6 +769,21 @@ xgb.train <- function(params = xgb.params(), data, nrounds, evals = list(),
 #' Whether to normalize the leaf value by lambda gradient. This can sometimes stagnate the training progress.
 #'
 #' Version added: 2.1.0
+#'
+#' @param lambdarank_score_normalization
+#'
+#' Whether to normalize the delta metric by the difference of prediction scores. This can
+#' sometimes stagnate the training progress. With pairwise ranking, we can normalize the
+#' gradient using the difference between two samples in each pair to reduce influence from
+#' the pairs that have large difference in ranking scores. This can help us regularize the
+#' model to reduce bias and prevent overfitting. Similar to other regularization
+#' techniques, this might prevent training from converging.
+#'
+#' There was no normalization before 2.0. In 2.0 and later versions this is used by
+#' default. In 3.0, we made this an option that users can disable.
+#'
+#' Version added: 3.0.0
+#'
 #' @param lambdarank_unbiased (for learning to rank (`"rank:ndcg"`, `"rank:map"`, `"rank:pairwise"`)) (default = `FALSE`)
 #' Specify whether do we need to debias input click data.
 #' @param lambdarank_bias_norm (for learning to rank (`"rank:ndcg"`, `"rank:map"`, `"rank:pairwise"`)) (default = 2.0)
@@ -833,6 +848,7 @@ xgb.params <- function(
   lambdarank_pair_method = NULL,
   lambdarank_num_pair_per_sample = NULL,
   lambdarank_normalization = NULL,
+  lambdarank_score_normalization = NULL,
   lambdarank_unbiased = NULL,
   lambdarank_bias_norm = NULL,
   ndcg_exp_gain = NULL

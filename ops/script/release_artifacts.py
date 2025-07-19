@@ -1,41 +1,32 @@
 """
 Simple script for managing Python, R, and source release packages.
 
-tqdm, sh are required to run this script.
+tqdm, sh, and build are required to run this script.
 """
 
 import argparse
-import os
 import shutil
 import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 from urllib.request import urlretrieve
 
 import tqdm
 from packaging import version
+from pypi_variants import make_pyproject
 from sh.contrib import git
+from test_utils import PY_PACKAGE
+from test_utils import ROOT as root_path
+from test_utils import DirectoryExcursion
 
 # S3 bucket hosting the release artifacts
 S3_BUCKET_URL = "https://s3-us-west-2.amazonaws.com/xgboost-nightly-builds"
-ROOT = Path(__file__).absolute().parent.parent
-DIST = ROOT / "python-package" / "dist"
+DIST = Path(PY_PACKAGE) / "dist"
+ROOT = Path(root_path)
 
 pbar = None
-
-
-class DirectoryExcursion:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self.curdir = Path.cwd().resolve()
-
-    def __enter__(self) -> None:
-        os.chdir(self.path)
-
-    def __exit__(self, *args: Any) -> None:
-        os.chdir(self.curdir)
 
 
 def show_progress(block_num: int, block_size: int, total_size: int) -> None:
@@ -118,16 +109,24 @@ def make_python_sdist(
     dist_dir = outdir / "dist"
     dist_dir.mkdir(exist_ok=True)
 
-    # Apply patch to remove NCCL dependency
-    # Save the original content of pyproject.toml so that we can restore it later
+    # Build sdist for `xgboost-cpu`.
     with DirectoryExcursion(ROOT):
-        with open("python-package/pyproject.toml", "r") as f:
-            orig_pyproj_lines = f.read()
-        with open("ops/patch/remove_nccl_dep.patch", "r") as f:
-            patch_lines = f.read()
-        subprocess.run(
-            ["patch", "-p0"], input=patch_lines, check=True, text=True, encoding="utf-8"
+        make_pyproject("cpu")
+    with DirectoryExcursion(ROOT / "python-package"):
+        subprocess.run(["python", "-m", "build", "--sdist"], check=True)
+        sdist_name = (
+            f"xgboost_cpu-{release}{rc}{rc_ver}.tar.gz"
+            if rc
+            else f"xgboost_cpu-{release}.tar.gz"
         )
+        src = DIST / sdist_name
+        subprocess.run(["twine", "check", str(src)], check=True)
+        dest = dist_dir / sdist_name
+        shutil.move(src, dest)
+
+    # Build sdist for `xgboost`.
+    with DirectoryExcursion(ROOT):
+        make_pyproject("default")
 
     with DirectoryExcursion(ROOT / "python-package"):
         subprocess.run(["python", "-m", "build", "--sdist"], check=True)
@@ -141,10 +140,6 @@ def make_python_sdist(
         dest = dist_dir / sdist_name
         shutil.move(src, dest)
 
-    with DirectoryExcursion(ROOT):
-        with open("python-package/pyproject.toml", "w") as f:
-            f.write(orig_pyproj_lines)
-
 
 def download_python_wheels(branch: str, commit_hash: str, outdir: Path) -> None:
     """Download all Python binary wheels for the specified branch."""
@@ -154,7 +149,7 @@ def download_python_wheels(branch: str, commit_hash: str, outdir: Path) -> None:
         "manylinux2014_aarch64",
         "manylinux_2_28_x86_64",
         "manylinux_2_28_aarch64",
-        "macosx_10_15_x86_64.macosx_11_0_x86_64.macosx_12_0_x86_64",
+        "macosx_10_15_x86_64",
         "macosx_12_0_arm64",
     ]
     minimal_platforms = [
@@ -163,14 +158,14 @@ def download_python_wheels(branch: str, commit_hash: str, outdir: Path) -> None:
         "manylinux2014_aarch64",
     ]
 
-    dir_url = f"{S3_BUCKET_URL}/{branch}/"
+    # https://s3-us-west-2.amazonaws.com/xgboost-nightly-builds/release_3.0.0/4bfd4bf60d32e2d62426cc4070ccb5a5ba1ed078/xgboost-3.0.0rc1-py3-none-manylinux_2_28_x86_64.whl
+    dir_url = f"{S3_BUCKET_URL}/{branch}/{commit_hash}/"
     wheels = []
-
     for pkg_name, platforms in [
         ("xgboost", full_platforms),
         ("xgboost_cpu", minimal_platforms),
     ]:
-        src_filename_prefix = f"{pkg_name}-{args.release}%2B{commit_hash}-py3-none-"
+        src_filename_prefix = f"{pkg_name}-{args.release}-py3-none-"
         target_filename_prefix = f"{pkg_name}-{args.release}-py3-none-"
         wheels.extend(
             _download_python_wheels(
@@ -188,7 +183,7 @@ Following steps should be done manually:
 
 
 def download_r_artifacts(
-    release: str, branch: str, rc: str, commit: str, outdir: Path
+    release: str, branch: str, commit: str, outdir: Path
 ) -> Tuple[Dict[str, str], List[str]]:
     """Download R package artifacts for the specified release and branch."""
     platforms = ["linux"]
@@ -196,16 +191,12 @@ def download_r_artifacts(
     rpkg_dir.mkdir(exist_ok=True)
 
     artifacts = []
-    branch = branch.split("_")[1]  # release_x.y.z
     urls = {}
 
+    # https://s3-us-west-2.amazonaws.com/xgboost-nightly-builds/release_3.0.0/4bfd4bf60d32e2d62426cc4070ccb5a5ba1ed078/xgboost_r_gpu_linux.tar.gz
     for plat in platforms:
-        url = f"{S3_BUCKET_URL}/{branch}/xgboost_r_gpu_{plat}_{commit}.tar.gz"
-        artifact_name = (
-            f"xgboost_r_gpu_{plat}_{release}-{rc}.tar.gz"
-            if rc
-            else f"xgboost_r_gpu_{plat}_{release}.tar.gz"
-        )
+        url = f"{S3_BUCKET_URL}/{branch}/{commit}/xgboost_r_gpu_{plat}.tar.gz"
+        artifact_name = f"xgboost_r_gpu_{plat}.tar.gz"
         artifact_path = rpkg_dir / artifact_name
         retrieve(url=url, filename=artifact_path)
         artifacts.append(artifact_path)
@@ -322,6 +313,7 @@ def main(args: argparse.Namespace) -> None:
         rc_ver: Optional[int] = None
     else:
         # RC release
+        assert release_parsed.pre is not None
         rc, rc_ver = release_parsed.pre
         if rc != "rc":
             raise ValueError(
@@ -356,7 +348,6 @@ def main(args: argparse.Namespace) -> None:
     urls, hashes = download_r_artifacts(
         release,
         branch,
-        "" if rc is None else f"rc{rc_ver}",
         commit_hash,
         outdir,
     )

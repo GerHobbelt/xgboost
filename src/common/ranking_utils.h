@@ -79,6 +79,7 @@ struct LambdaRankParam : public XGBoostParameter<LambdaRankParam> {
   // unbiased
   bool lambdarank_unbiased{false};
   bool lambdarank_normalization{true};
+  bool lambdarank_score_normalization{true};
   double lambdarank_bias_norm{1.0};
   // ndcg
   bool ndcg_exp_gain{true};
@@ -88,6 +89,7 @@ struct LambdaRankParam : public XGBoostParameter<LambdaRankParam> {
            lambdarank_num_pair_per_sample == that.lambdarank_num_pair_per_sample &&
            lambdarank_unbiased == that.lambdarank_unbiased &&
            lambdarank_normalization == that.lambdarank_normalization &&
+           lambdarank_score_normalization == that.lambdarank_score_normalization &&
            lambdarank_bias_norm == that.lambdarank_bias_norm && ndcg_exp_gain == that.ndcg_exp_gain;
   }
   bool operator!=(LambdaRankParam const& that) const { return !(*this == that); }
@@ -113,6 +115,7 @@ struct LambdaRankParam : public XGBoostParameter<LambdaRankParam> {
   }
 
   [[nodiscard]] bool HasTruncation() const { return lambdarank_pair_method == PairMethod::kTopK; }
+  [[nodiscard]] bool IsMean() const { return lambdarank_pair_method == PairMethod::kMean; }
 
   // Used for evaluation metric and cache initialization, iterate through top-k or the whole list
   [[nodiscard]] auto TopK() const {
@@ -139,6 +142,9 @@ struct LambdaRankParam : public XGBoostParameter<LambdaRankParam> {
     DMLC_DECLARE_FIELD(lambdarank_normalization)
         .set_default(true)
         .describe("Whether to normalize the leaf value for lambda rank.");
+    DMLC_DECLARE_FIELD(lambdarank_score_normalization)
+        .set_default(true)
+        .describe("Whether to normalize the delta by prediction score difference.");
     DMLC_DECLARE_FIELD(lambdarank_bias_norm)
         .set_default(1.0)
         .set_lower_bound(0.0)
@@ -175,7 +181,8 @@ class RankingCache {
   HostDeviceVector<std::size_t> y_sorted_idx_cache_;
   // Cached labels sorted by the model
   HostDeviceVector<float> y_ranked_by_model_;
-  // store rounding factor for objective for each group
+  // Rounding factor for CUDA deterministic floating point summation. One rounding factor
+  // for each ranking group.
   linalg::Vector<GradientPair> roundings_;
   // rounding factor for cost
   HostDeviceVector<double> cost_rounding_;
@@ -209,6 +216,9 @@ class RankingCache {
     }
     if (!info.weights_.Empty()) {
       CHECK_EQ(Groups(), info.weights_.Size()) << error::GroupWeight();
+    }
+    if (param_.HasTruncation()) {
+      CHECK_GE(param_.NumPair(), 1);
     }
   }
   [[nodiscard]] std::size_t MaxPositionSize() const {
@@ -262,21 +272,21 @@ class RankingCache {
   }
 
   // CUDA cache getters, the cache is shared between metric and objective, some of these
-  // fields are lazy initialized to avoid unnecessary allocation.
+  // fields are initialized lazily to avoid unnecessary allocation.
   [[nodiscard]] common::Span<std::size_t const> CUDAThreadsGroupPtr() const {
     CHECK(!threads_group_ptr_.Empty());
     return threads_group_ptr_.ConstDeviceSpan();
   }
   [[nodiscard]] std::size_t CUDAThreads() const { return n_cuda_threads_; }
 
-  linalg::VectorView<GradientPair> CUDARounding(Context const* ctx) {
+  [[nodiscard]] linalg::VectorView<GradientPair> CUDARounding(Context const* ctx) {
     if (roundings_.Size() == 0) {
       roundings_.SetDevice(ctx->Device());
       roundings_.Reshape(Groups());
     }
     return roundings_.View(ctx->Device());
   }
-  common::Span<double> CUDACostRounding(Context const* ctx) {
+  [[nodiscard]] common::Span<double> CUDACostRounding(Context const* ctx) {
     if (cost_rounding_.Size() == 0) {
       cost_rounding_.SetDevice(ctx->Device());
       cost_rounding_.Resize(1);

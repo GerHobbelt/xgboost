@@ -62,6 +62,7 @@ xgb.params(
   lambdarank_pair_method = NULL,
   lambdarank_num_pair_per_sample = NULL,
   lambdarank_normalization = NULL,
+  lambdarank_score_normalization = NULL,
   lambdarank_unbiased = NULL,
   lambdarank_bias_norm = NULL,
   ndcg_exp_gain = NULL
@@ -99,8 +100,8 @@ Note that predictions are returned on the hazard ratio scale (i.e., as HR = exp(
 See \href{https://xgboost.readthedocs.io/en/latest/tutorials/aft_survival_analysis.html}{Survival Analysis with Accelerated Failure Time} for details.
 \item \code{"multi:softmax"}: set XGBoost to do multiclass classification using the softmax objective, you also need to set num_class(number of classes)
 \item \code{"multi:softprob"}: same as softmax, but output a vector of \code{ndata * nclass}, which can be further reshaped to \code{ndata * nclass} matrix. The result contains predicted probability of each data point belonging to each class.
-\item \code{"rank:ndcg"}: Use LambdaMART to perform pair-wise ranking where \href{http://en.wikipedia.org/wiki/NDCG}{Normalized Discounted Cumulative Gain (NDCG)} is maximized. This objective supports position debiasing for click data.
-\item \code{"rank:map"}: Use LambdaMART to perform pair-wise ranking where \href{http://en.wikipedia.org/wiki/Mean_average_precision#Mean_average_precision}{Mean Average Precision (MAP)} is maximized
+\item \code{"rank:ndcg"}: Use LambdaMART to perform pair-wise ranking where \href{https://en.wikipedia.org/wiki/NDCG}{Normalized Discounted Cumulative Gain (NDCG)} is maximized. This objective supports position debiasing for click data.
+\item \code{"rank:map"}: Use LambdaMART to perform pair-wise ranking where \href{https://en.wikipedia.org/wiki/Mean_average_precision#Mean_average_precision}{Mean Average Precision (MAP)} is maximized
 \item \code{"rank:pairwise"}: Use LambdaRank to perform pair-wise ranking using the \code{ranknet} objective.
 \item \code{"reg:gamma"}: gamma regression with log-link. Output is a mean of gamma distribution. It might be useful, e.g., for modeling insurance claims severity, or for any outcome that might be \href{https://en.wikipedia.org/wiki/Gamma_distribution#Occurrence_and_applications}{gamma-distributed}.
 \item \code{"reg:tweedie"}: Tweedie regression with log-link. It might be useful, e.g., for modeling total loss in insurance, or for any outcome that might be \href{https://en.wikipedia.org/wiki/Tweedie_distribution#Occurrence_and_applications}{Tweedie-distributed}.
@@ -137,7 +138,7 @@ range: \eqn{[0, \infty)}
 
 Note: should only pass one of \code{gamma} or \code{min_split_loss}. Both refer to the same parameter and there's thus no difference between one or the other.}
 
-\item{max_depth}{(for Tree Booster) (default=6)
+\item{max_depth}{(for Tree Booster) (default=6, type=int32)
 Maximum depth of a tree. Increasing this value will make the model more complex and more likely to overfit. 0 indicates no limit on depth. Beware that XGBoost aggressively consumes memory when training a deep tree. \code{"exact"} tree method requires non-zero value.
 
 range: \eqn{[0, \infty)}}
@@ -213,7 +214,7 @@ Note: should only pass one of \code{lambda} or \code{reg_lambda}. Both refer to 
 Note: should only pass one of \code{alpha} or \code{reg_alpha}. Both refer to the same parameter and there's thus no difference between one or the other.}
 
 \item{tree_method}{(for Tree Booster) (default= \code{"auto"})
-The tree construction algorithm used in XGBoost. See description in the \href{http://arxiv.org/abs/1603.02754}{reference paper} and \href{https://xgboost.readthedocs.io/en/latest/treemethod.html}{Tree Methods}.
+The tree construction algorithm used in XGBoost. See description in the \href{https://arxiv.org/abs/1603.02754}{reference paper} and \href{https://xgboost.readthedocs.io/en/latest/treemethod.html}{Tree Methods}.
 
 Choices: \code{"auto"}, \code{"exact"}, \code{"approx"}, \code{"hist"}, this is a combination of commonly
 used updaters.  For other updaters like \code{"refresh"}, set the parameter \code{updater}
@@ -264,10 +265,10 @@ This is a parameter of the \code{"refresh"} updater. When this flag is 1, tree l
 }
 }}
 
-\item{max_leaves}{(for Tree Booster) (default=0)
+\item{max_leaves}{(for Tree Booster) (default=0, type=int32)
 Maximum number of nodes to be added.  Not used by \code{"exact"} tree method.}
 
-\item{max_bin}{(for Tree Booster) (default=256)
+\item{max_bin}{(for Tree Booster) (default=256, type=int32)
 \itemize{
 \item Only used if \code{tree_method} is set to \code{"hist"} or \code{"approx"}.
 \item Maximum number of discrete bins to bucket continuous features.
@@ -312,16 +313,16 @@ disable the estimation, specify a real number argument.
 \item User can add multiple evaluation metrics.
 \item The choices are listed below:
 \itemize{
-\item \code{"rmse"}: \href{http://en.wikipedia.org/wiki/Root_mean_square_error}{root mean square error}
+\item \code{"rmse"}: \href{https://en.wikipedia.org/wiki/Root_mean_square_error}{root mean square error}
 \item \code{"rmsle"}: root mean square log error: \eqn{\sqrt{\frac{1}{N}[log(pred + 1) - log(label + 1)]^2}}. Default metric of \code{"reg:squaredlogerror"} objective. This metric reduces errors generated by outliers in dataset.  But because \code{log} function is employed, \code{"rmsle"} might output \code{nan} when prediction value is less than -1.  See \code{"reg:squaredlogerror"} for other requirements.
 \item \code{"mae"}: \href{https://en.wikipedia.org/wiki/Mean_absolute_error}{mean absolute error}
 \item \code{"mape"}: \href{https://en.wikipedia.org/wiki/Mean_absolute_percentage_error}{mean absolute percentage error}
 \item \code{"mphe"}: \href{https://en.wikipedia.org/wiki/Huber_loss}{mean Pseudo Huber error}. Default metric of \code{"reg:pseudohubererror"} objective.
-\item \code{"logloss"}: \href{http://en.wikipedia.org/wiki/Log-likelihood}{negative log-likelihood}
+\item \code{"logloss"}: \href{https://en.wikipedia.org/wiki/Log-likelihood}{negative log-likelihood}
 \item \code{"error"}: Binary classification error rate. It is calculated as \verb{#(wrong cases)/#(all cases)}. For the predictions, the evaluation will regard the instances with prediction value larger than 0.5 as positive instances, and the others as negative instances.
 \item \code{"error@t"}: a different than 0.5 binary classification threshold value could be specified by providing a numerical value through 't'.
 \item \code{"merror"}: Multiclass classification error rate. It is calculated as \verb{#(wrong cases)/#(all cases)}.
-\item \code{"mlogloss"}: \href{http://scikit-learn.org/stable/modules/generated/sklearn.metrics.log_loss.html}{Multiclass logloss}.
+\item \code{"mlogloss"}: \href{https://scikit-learn.org/stable/modules/generated/sklearn.metrics.log_loss.html}{Multiclass logloss}.
 \item \code{"auc"}: \href{https://en.wikipedia.org/wiki/Receiver_operating_characteristic#Area_under_the_curve}{Receiver Operating Characteristic Area under the Curve}.
 Available for classification and learning-to-rank tasks.
 \itemize{
@@ -336,8 +337,8 @@ Available for classification and learning-to-rank tasks.
 
 After XGBoost 1.6, both of the requirements and restrictions for using \code{"aucpr"} in classification problem are similar to \code{"auc"}.  For ranking task, only binary relevance label \eqn{y \in [0, 1]} is supported.  Different from \code{"map"} (mean average precision), \code{"aucpr"} calculates the \emph{interpolated} area under precision recall curve using continuous interpolation.
 \item \code{"pre"}: Precision at \eqn{k}. Supports only learning to rank task.
-\item \code{"ndcg"}: \href{http://en.wikipedia.org/wiki/NDCG}{Normalized Discounted Cumulative Gain}
-\item \code{"map"}: \href{http://en.wikipedia.org/wiki/Mean_average_precision#Mean_average_precision}{Mean Average Precision}
+\item \code{"ndcg"}: \href{https://en.wikipedia.org/wiki/NDCG}{Normalized Discounted Cumulative Gain}
+\item \code{"map"}: \href{https://en.wikipedia.org/wiki/Mean_average_precision#Mean_average_precision}{Mean Average Precision}
 
 The \verb{average precision} is defined as:
 
@@ -512,6 +513,18 @@ range = \eqn{[1, \infty)}}
 Whether to normalize the leaf value by lambda gradient. This can sometimes stagnate the training progress.
 
 Version added: 2.1.0}
+
+\item{lambdarank_score_normalization}{Whether to normalize the delta metric by the difference of prediction scores. This can
+sometimes stagnate the training progress. With pairwise ranking, we can normalize the
+gradient using the difference between two samples in each pair to reduce influence from
+the pairs that have large difference in ranking scores. This can help us regularize the
+model to reduce bias and prevent overfitting. Similar to other regularization
+techniques, this might prevent training from converging.
+
+There was no normalization before 2.0. In 2.0 and later versions this is used by
+default. In 3.0, we made this an option that users can disable.
+
+Version added: 3.0.0}
 
 \item{lambdarank_unbiased}{(for learning to rank (\code{"rank:ndcg"}, \code{"rank:map"}, \code{"rank:pairwise"})) (default = \code{FALSE})
 Specify whether do we need to debias input click data.}

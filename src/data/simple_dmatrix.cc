@@ -1,5 +1,5 @@
 /**
- * Copyright 2014-2024, XGBoost Contributors
+ * Copyright 2014-2025, XGBoost Contributors
  * \file simple_dmatrix.cc
  * \brief the input data structure for gradient boosting
  * \author Tianqi Chen
@@ -12,13 +12,14 @@
 #include <type_traits>
 #include <vector>
 
-#include "../collective/communicator-inl.h"  // for GetWorldSize, GetRank, Allgather
 #include "../collective/allgather.h"
+#include "../collective/communicator-inl.h"  // for GetWorldSize, GetRank, Allgather
 #include "../common/error_msg.h"             // for InconsistentMaxBin
 #include "./simple_batch_iterator.h"
 #include "adapter.h"
-#include "batch_utils.h"   // for CheckEmpty, RegenGHist
-#include "ellpack_page.h"  // for EllpackPage
+#include "batch_utils.h"    // for CheckEmpty, RegenGHist
+#include "cat_container.h"  // for CatContainer
+#include "ellpack_page.h"   // for EllpackPage
 #include "gradient_index.h"
 #include "xgboost/c_api.h"
 #include "xgboost/data.h"
@@ -49,10 +50,15 @@ DMatrix* SimpleDMatrix::Slice(common::Span<int32_t const> ridxs) {
     out->Info() = this->Info().Slice(&ctx, h_ridx, h_offset.back());
   }
   out->fmat_ctx_ = this->fmat_ctx_;
+
+  out->Info().Cats()->Copy(&fmat_ctx_, *this->Info().Cats());
   return out;
 }
 
 DMatrix* SimpleDMatrix::SliceCol(int num_slices, int slice_id) {
+  if (this->Cats()->HasCategorical()) {
+    LOG(FATAL) << "Slicing column is not supported for DataFrames with categorical columns.";
+  }
   auto out = new SimpleDMatrix;
   SparsePage& out_page = *out->sparse_page_;
   auto const slice_size = info_.num_col_ / num_slices;
@@ -285,6 +291,12 @@ SimpleDMatrix::SimpleDMatrix(AdapterT* adapter, float missing, int nthread,
     info_.num_col_ = inferred_num_columns;
   } else {
     info_.num_col_ = adapter->NumColumns();
+  }
+
+  if constexpr (std::is_same_v<AdapterT, ColumnarAdapter>) {
+    if (adapter->HasCategorical()) {
+      info_.Cats(std::make_shared<CatContainer>(adapter->Cats()));
+    }
   }
 
   // Must called before sync column

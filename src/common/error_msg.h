@@ -117,12 +117,23 @@ constexpr StringView InconsistentFeatureTypes() {
   return "Inconsistent feature types between batches.";
 }
 
+constexpr StringView InconsistentCategories() {
+  return "Inconsistent number of categories between batches.";
+}
+
 void CheckOldNccl(std::int32_t major, std::int32_t minor, std::int32_t patch);
 
 constexpr StringView ZeroCudaMemory() {
   return "No GPU memory is left, are you using RMM? If so, please install XGBoost with RMM "
          "support. If you are using other types of memory pool, please consider reserving a "
          "portion of the GPU memory for XGBoost.";
+}
+
+// float64 is not supported by JSON yet. Also, floating point as categories is tricky
+// since floating point equality test is inaccurate for most hardware.
+constexpr StringView NoFloatCat() {
+  return "Category index from DataFrame has floating point dtype, consider using strings or "
+         "integers instead.";
 }
 }  // namespace xgboost::error
 #endif  // XGBOOST_COMMON_ERROR_MSG_H_

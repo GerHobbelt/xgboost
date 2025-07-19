@@ -113,8 +113,12 @@ xgb.cv <- function(params = xgb.params(), data, nrounds, nfold,
   check.deprecation(deprecated_cv_params, match.call(), ...)
 
   stopifnot(inherits(data, "xgb.DMatrix"))
+
   if (inherits(data, "xgb.DMatrix") && .Call(XGCheckNullPtr_R, data)) {
     stop("'data' is an invalid 'xgb.DMatrix' object. Must be constructed again.")
+  }
+  if (inherits(data, "xgb.QuantileDMatrix")) {
+    stop("'xgb.QuantileDMatrix' is not supported as input to 'xgb.cv'.")
   }
 
   params <- check.booster.params(params)
@@ -171,7 +175,8 @@ xgb.cv <- function(params = xgb.params(), data, nrounds, nfold,
       xgb.cb.early.stop(
         early_stopping_rounds,
         maximize = maximize,
-        verbose = verbose
+        verbose = verbose,
+        save_best = FALSE
       ),
       as_first_elt = TRUE
     )
@@ -268,6 +273,7 @@ xgb.cv <- function(params = xgb.params(), data, nrounds, nfold,
 
     if (should_stop) break
   }
+
   cb_outputs <- .execute.cb.after.training(
     callbacks,
     bst_folds,
@@ -276,6 +282,11 @@ xgb.cv <- function(params = xgb.params(), data, nrounds, nfold,
     iteration,
     msg
   )
+
+  # Just in case if the model is referenced in callbacks.
+  lapply(bst_folds, function(fd) {
+    xgb.reset.Booster(fd$bst)
+  })
 
   # the CV result
   ret <- list(
@@ -310,7 +321,7 @@ xgb.cv <- function(params = xgb.params(), data, nrounds, nfold,
 #'
 #' train <- agaricus.train
 #' cv <- xgb.cv(
-#'   data = xgb.DMatrix(train$data, label = train$label),
+#'   data = xgb.DMatrix(train$data, label = train$label, nthread = 1),
 #'   nfold = 5,
 #'   nrounds = 2,
 #'   params = xgb.params(

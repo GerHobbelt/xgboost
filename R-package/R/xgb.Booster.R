@@ -265,7 +265,7 @@ xgb.get.handle <- function(object) {
 #' test <- agaricus.test
 #'
 #' bst <- xgb.train(
-#'   data = xgb.DMatrix(train$data, label = train$label),
+#'   data = xgb.DMatrix(train$data, label = train$label, nthread = 1),
 #'   nrounds = 5,
 #'   params = xgb.params(
 #'     max_depth = 2,
@@ -309,7 +309,7 @@ xgb.get.handle <- function(object) {
 #' set.seed(11)
 #'
 #' bst <- xgb.train(
-#'   data = xgb.DMatrix(as.matrix(iris[, -5]), label = lb),
+#'   data = xgb.DMatrix(as.matrix(iris[, -5], nthread = 1), label = lb),
 #'   nrounds = 10,
 #'   params = xgb.params(
 #'     max_depth = 4,
@@ -332,7 +332,7 @@ xgb.get.handle <- function(object) {
 #' set.seed(11)
 #'
 #' bst <- xgb.train(
-#'   data = xgb.DMatrix(as.matrix(iris[, -5]), label = lb),
+#'   data = xgb.DMatrix(as.matrix(iris[, -5], nthread = 1), label = lb),
 #'   nrounds = 10,
 #'   params = xgb.params(
 #'     max_depth = 4,
@@ -664,7 +664,7 @@ validate.features <- function(bst, newdata) {
 #' train <- agaricus.train
 #'
 #' bst <- xgb.train(
-#'   data = xgb.DMatrix(train$data, label = train$label),
+#'   data = xgb.DMatrix(train$data, label = train$label, nthread = 1),
 #'   nrounds = 2,
 #'   params = xgb.params(
 #'     max_depth = 2,
@@ -771,7 +771,7 @@ xgb.attributes <- function(object) {
 #' train <- agaricus.train
 #'
 #' bst <- xgb.train(
-#'   data = xgb.DMatrix(train$data, label = train$label),
+#'   data = xgb.DMatrix(train$data, label = train$label, nthread = 1),
 #'   nrounds = 2,
 #'   params = xgb.params(
 #'     max_depth = 2,
@@ -825,7 +825,7 @@ xgb.config <- function(object) {
 #' train <- agaricus.train
 #'
 #' bst <- xgb.train(
-#'   data = xgb.DMatrix(train$data, label = train$label),
+#'   data = xgb.DMatrix(train$data, label = train$label, nthread = 1),
 #'   nrounds = 2,
 #'   params = xgb.params(
 #'     max_depth = 2,
@@ -1206,6 +1206,14 @@ xgb.copy.Booster <- function(model) {
   return(.Call(XGDuplicate_R, model))
 }
 
+xgb.reset.Booster <- function(model) {
+  if (!inherits(model, "xgb.Booster")) {
+    stop("'model' must be an 'xgb.Booster' object.")
+  }
+  .Call(XGBoosterReset_R, xgb.get.handle(model))
+  return(model)
+}
+
 #' Check if two boosters share the same C object
 #'
 #' Checks whether two booster objects refer to the same underlying C object.
@@ -1276,7 +1284,7 @@ xgb.is.same.Booster <- function(obj1, obj2) {
 #' train <- agaricus.train
 #'
 #' bst <- xgb.train(
-#'   data = xgb.DMatrix(train$data, label = train$label),
+#'   data = xgb.DMatrix(train$data, label = train$label, nthread = 1),
 #'   nrounds = 2,
 #'   params = xgb.params(
 #'     max_depth = 2,

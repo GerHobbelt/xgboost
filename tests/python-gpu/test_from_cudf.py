@@ -212,26 +212,23 @@ class TestFromColumnar:
         # mixed dtypes
         X["0"] = X["0"].astype(np.int64)
         X["2"] = X["2"].astype(np.int64)
-        df, cat_codes, _, _ = xgb.data._transform_cudf_df(
-            X, None, None, enable_categorical=True
-        )
+        df, _, _ = xgb.data._transform_cudf_df(X, None, None, enable_categorical=True)
         assert X.shape[1] == n_features
-        assert len(cat_codes) == X.shape[1]
-        assert not cat_codes[0]
-        assert not cat_codes[2]
+        assert isinstance(df.aitfs[0], dict)
+        assert isinstance(df.aitfs[1], tuple)
+        assert isinstance(df.aitfs[2], dict)
 
-        interfaces_str = xgb.data._cudf_array_interfaces(df, cat_codes)
+        interfaces_str = df.array_interface()
         interfaces = json.loads(interfaces_str)
         assert len(interfaces) == X.shape[1]
 
         # test missing value
         X = cudf.DataFrame({"f0": ["a", "b", np.nan]})
         X["f0"] = X["f0"].astype("category")
-        df, cat_codes, _, _ = xgb.data._transform_cudf_df(
-            X, None, None, enable_categorical=True
-        )
-        for col in cat_codes:
-            assert col.has_nulls
+        df, _, _ = xgb.data._transform_cudf_df(X, None, None, enable_categorical=True)
+        for col in df.aitfs:
+            assert isinstance(col, tuple)
+            assert "mask" in col[1]
 
         y = [0, 1, 2]
         with pytest.raises(ValueError):
@@ -382,3 +379,20 @@ def test_from_cudf_iter(enable_categorical):
     predict = reg.predict(m)
     predict_with_it = reg_with_it.predict(m_it)
     np.testing.assert_allclose(predict_with_it, predict)
+
+
+def test_invalid_meta() -> None:
+    df = cudf.DataFrame({"f0": [0, 1, 2], "f1": [2, 3, 4], "y": [None, 1, 2]})
+    y = df["y"]
+    X = df.drop(["y"], axis=1)
+    with pytest.raises(ValueError, match="Missing value"):
+        xgb.DMatrix(X, y)
+    with pytest.raises(ValueError, match="Missing value"):
+        xgb.QuantileDMatrix(X, y)
+    y = X.copy()
+    y.iloc[0, 0] = None
+    # check by the cuDF->cupy converter.
+    with pytest.raises(ValueError, match="no nulls"):
+        xgb.DMatrix(X, y)
+    with pytest.raises(ValueError, match="no nulls"):
+        xgb.QuantileDMatrix(X, y)

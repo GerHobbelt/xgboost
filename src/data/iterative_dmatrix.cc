@@ -1,5 +1,5 @@
 /**
- * Copyright 2022-2024, XGBoost contributors
+ * Copyright 2022-2025, XGBoost contributors
  */
 #include "iterative_dmatrix.h"
 
@@ -51,7 +51,7 @@ IterativeDMatrix::IterativeDMatrix(DataIterHandle iter_handle, DMatrixHandle pro
   this->batch_ = p;
 
   LOG(INFO) << "Finished constructing the `IterativeDMatrix`: (" << this->Info().num_row_ << ", "
-            << this->Info().num_col_ << ", " << this->Info().num_nonzero_ << ").";
+            << this->Info().num_col_ << ", " << this->info_.num_nonzero_ << ").";
 }
 
 void IterativeDMatrix::InitFromCPU(Context const* ctx, BatchParam const& p,
@@ -66,7 +66,7 @@ void IterativeDMatrix::InitFromCPU(Context const* ctx, BatchParam const& p,
   common::HistogramCuts cuts;
   ExternalDataInfo ext_info;
   cpu_impl::GetDataShape(ctx, proxy, iter, missing, &ext_info);
-  ext_info.SetInfo(ctx, &this->info_);
+  ext_info.SetInfo(ctx, true, &this->info_);
 
   /**
    * Generate quantiles
@@ -110,12 +110,11 @@ void IterativeDMatrix::InitFromCPU(Context const* ctx, BatchParam const& p,
     accumulated_rows += BatchSamples(proxy);
   }
   iter.Reset();
-  CHECK_EQ(accumulated_rows, Info().num_row_);
+  CHECK_EQ(accumulated_rows, this->info_.num_row_);
 
   if (ext_info.n_batches == 1) {
     this->info_ = std::move(proxy->Info());
-    this->info_.num_nonzero_ = ext_info.nnz;
-    this->info_.num_col_ = ext_info.n_features;  // proxy might be empty.
+    ext_info.SetInfo(ctx, false, &this->info_);
     CHECK_EQ(proxy->Info().labels.Size(), 0);
   }
 

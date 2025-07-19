@@ -449,12 +449,6 @@ class _SparkXGBParams(
                 "The `exact` tree method is not supported for distributed systems."
             )
 
-        if self.getOrDefault(self.features_cols):
-            if not self._run_on_gpu():
-                raise ValueError(
-                    "features_col param with list value requires `device=cuda`."
-                )
-
         if self.getOrDefault("objective") is not None:
             if not isinstance(self.getOrDefault("objective"), str):
                 raise ValueError("Only string type 'objective' param is allowed.")
@@ -641,6 +635,7 @@ class _SparkXGBEstimator(Estimator, _SparkXGBParams, MLReadable, MLWritable):
             repartition_random_shuffle=False,
             feature_names=None,
             feature_types=None,
+            feature_weights=None,
             arbitrary_params_dict={},
             launch_tracker_on_driver=True,
         )
