@@ -104,45 +104,40 @@ Conda should be able to detect the existence of a GPU on your machine and instal
 
 .. code-block:: bash
 
-   # CPU only
-   conda install -c conda-forge py-xgboost-cpu
-   # Use NVIDIA GPU
-   conda install -c conda-forge py-xgboost-gpu
+   # CPU variant
+   conda install -c conda-forge py-xgboost=*=cpu*
+   # GPU variant
+   conda install -c conda-forge py-xgboost=*=cuda*
 
 To force the installation of the GPU variant on a machine that does not have an NVIDIA GPU, use environment variable ``CONDA_OVERRIDE_CUDA``,
 as described in `"Managing Virtual Packages" in the conda docs <https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-virtual.html>`_.
 
 .. code-block:: bash
 
-  export CONDA_OVERRIDE_CUDA="12.5"
-  conda install -c conda-forge py-xgboost-gpu
+  export CONDA_OVERRIDE_CUDA="12.8"
+  conda install -c conda-forge py-xgboost=*=cuda*
 
-Visit the `Miniconda website <https://docs.conda.io/en/latest/miniconda.html>`_ to obtain Conda.
-
-.. note:: ``py-xgboost-gpu`` not available on Windows.
-
-   The ``py-xgboost-gpu`` is currently not available on Windows. If you are using Windows,
-   please use ``pip`` to install XGBoost with GPU support.
+You can install Conda from the following link: `Download the conda-forge Installer <https://conda-forge.org/download/>`_.
 
 R
 -
 
-* From CRAN:
+* From R Universe
 
-  .. code-block:: R
+.. code-block:: R
 
-    install.packages("xgboost")
+    install.packages('xgboost', repos = c('https://dmlc.r-universe.dev', 'https://cloud.r-project.org'))
 
-  .. note:: Using all CPU cores (threads) on Mac OSX
+.. note:: Using all CPU cores (threads) on Mac OSX
 
-     If you are using Mac OSX, you should first install OpenMP library (``libomp``) by running
+   If you are using Mac OSX, you should first install OpenMP library (``libomp``) by running
 
-     .. code-block:: bash
+   .. code-block:: bash
 
         brew install libomp
 
-     and then run ``install.packages("xgboost")``. Without OpenMP, XGBoost will only use a
-     single CPU core, leading to suboptimal training speed.
+   and then run ``install.packages("xgboost")``. Without OpenMP, XGBoost will only use a
+   single CPU core, leading to suboptimal training speed.
 
 * We also provide **experimental** pre-built binary with GPU support. With this binary,
   you will be able to use the GPU algorithm without building XGBoost from the source.
@@ -157,6 +152,30 @@ R
     R -q -e "install.packages(c('data.table', 'jsonlite'))"
     # Install XGBoost
     R CMD INSTALL ./xgboost_r_gpu_linux.tar.gz
+
+
+* From CRAN (outdated):
+
+.. warning::
+
+    We are working on bringing the CRAN version of XGBoost up-to-date, in the meantime,
+    please use packages from the R-universe.
+
+
+.. code-block:: R
+
+    install.packages("xgboost")
+
+.. note:: Using all CPU cores (threads) on Mac OSX
+
+   If you are using Mac OSX, you should first install OpenMP library (``libomp``) by running
+
+   .. code-block:: bash
+
+        brew install libomp
+
+   and then run ``install.packages("xgboost")``. Without OpenMP, XGBoost will only use a
+   single CPU core, leading to suboptimal training speed.
 
 JVM
 ---

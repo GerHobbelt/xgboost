@@ -246,6 +246,7 @@ class TestDistributedGPU:
                 check_uneven_nan(client, "hist", "cuda", n_workers)
 
     @pytest.mark.skipif(**tm.no_dask_cudf())
+    @pytest.mark.xfail(reason="Incompatible with Dask 2025.2.0+")
     def test_dask_dataframe(self, local_cuda_client: Client) -> None:
         run_with_dask_dataframe(dxgb.DaskDMatrix, local_cuda_client)
         run_with_dask_dataframe(dxgb.DaskQuantileDMatrix, local_cuda_client)
@@ -670,9 +671,7 @@ async def run_from_dask_array_asyncio(scheduler_address: str) -> dxgb.TrainRetur
         X = X.to_backend("cupy")
         y = y.to_backend("cupy")
 
-        m: dxgb.DaskDMatrix = await dxgb.DaskQuantileDMatrix(
-            client, X, y
-        )  # type:ignore
+        m: dxgb.DaskDMatrix = await dxgb.DaskQuantileDMatrix(client, X, y)
         output = await dxgb.train(
             client, {"tree_method": "hist", "device": "cuda"}, dtrain=m
         )
