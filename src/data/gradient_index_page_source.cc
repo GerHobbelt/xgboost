@@ -12,18 +12,17 @@
 namespace xgboost::data {
 void GradientIndexPageSource::Fetch() {
   if (!this->ReadCache()) {
-    if (count_ != 0 && !sync_) {
-      // source is initialized to be the 0th page during construction, so when count_ is 0
-      // there's no need to increment the source.
-      //
+    // source is initialized to be the 0th page during construction, so when count_ is 0
+    // there's no need to increment the source.
+    if (this->count_ != 0 && !this->sync_) {
       // The mixin doesn't sync the source if `sync_` is false, we need to sync it
       // ourselves.
       ++(*source_);
     }
     // This is not read from cache so we still need it to be synced with sparse page source.
-    CHECK_EQ(count_, source_->Iter());
-    auto const& csr = source_->Page();
-    CHECK_NE(cuts_.Values().size(), 0);
+    CHECK_EQ(this->count_, this->source_->Iter());
+    auto const& csr = this->source_->Page();
+    CHECK_NE(this->cuts_.Values().size(), 0);
     this->page_.reset(new GHistIndexMatrix{*csr, feature_types_, cuts_, max_bin_per_feat_,
                                            is_dense_, sparse_thresh_, nthreads_});
     this->WriteCache();
@@ -33,8 +32,6 @@ void GradientIndexPageSource::Fetch() {
 void ExtGradientIndexPageSource::Fetch() {
   if (!this->ReadCache()) {
     CHECK_EQ(count_, source_->Iter());
-    ++(*source_);
-    CHECK_GE(source_->Iter(), 1);
     CHECK_NE(cuts_.Values().size(), 0);
     HostAdapterDispatch(proxy_, [this](auto const& value) {
       CHECK(this->proxy_->Ctx()->IsCPU()) << "All batches must use the same device type.";
@@ -50,9 +47,9 @@ void ExtGradientIndexPageSource::Fetch() {
       // FIXME(jiamingy): For now, we use the `info->IsDense()` to represent all batches
       // similar to the sparse DMatrix source. We should use per-batch property with proxy
       // DMatrix info instead. This requires more fine-grained tests.
-      this->page_ = std::make_shared<GHistIndexMatrix>(
-          value.NumRows(), this->base_rows_.at(source_->Iter() - 1), std::move(cuts),
-          this->p_.max_bin, info_->IsDense());
+      this->page_ =
+          std::make_shared<GHistIndexMatrix>(value.NumRows(), this->base_rows_.at(source_->Iter()),
+                                             std::move(cuts), this->p_.max_bin, info_->IsDense());
       bst_idx_t prev_sum = 0;
       bst_idx_t rbegin = 0;
       // Use `value.NumRows()` for the size of a single batch. Unlike the

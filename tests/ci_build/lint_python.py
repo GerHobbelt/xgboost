@@ -32,6 +32,7 @@ class LintersPaths:
         "tests/python/test_tree_regularization.py",
         "tests/python/test_training_continuation.py",
         "tests/python/test_shap.py",
+        "tests/python/test_updaters.py",
         "tests/python/test_model_io.py",
         "tests/python/test_with_pandas.py",
         "tests/python-gpu/",
@@ -104,6 +105,7 @@ class LintersPaths:
         "tests/test_distributed/test_with_spark/test_data.py",
         "tests/test_distributed/test_gpu_with_spark/test_data.py",
         "tests/test_distributed/test_gpu_with_dask/test_gpu_with_dask.py",
+        "tests/test_distributed/test_gpu_with_dask/test_gpu_external_memory.py",
         # demo
         "demo/dask/",
         "demo/json-model/json_parser.py",

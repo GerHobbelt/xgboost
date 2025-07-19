@@ -306,11 +306,12 @@ def _check_distributed_params(kwargs: Dict[str, Any]) -> None:
         raise TypeError(msg)
 
     if device and device.find(":") != -1:
-        raise ValueError(
-            "Distributed training doesn't support selecting device ordinal as GPUs are"
-            " managed by the distributed frameworks. use `device=cuda` or `device=gpu`"
-            " instead."
-        )
+        if device != "sycl:gpu":
+            raise ValueError(
+                "Distributed training doesn't support selecting device ordinal as GPUs are"
+                " managed by the distributed frameworks. use `device=cuda` or `device=gpu`"
+                " instead."
+            )
 
     if kwargs.get("booster", None) == "gblinear":
         raise NotImplementedError(
@@ -503,8 +504,8 @@ def _prediction_output(
 class DataIter(ABC):  # pylint: disable=too-many-instance-attributes
     """The interface for user defined data iterator. The iterator facilitates
     distributed training, :py:class:`QuantileDMatrix`, and external memory support using
-    :py:class:`DMatrix`. Most of time, users don't need to interact with this class
-    directly.
+    :py:class:`DMatrix` or :py:class:`ExtMemQuantileDMatrix`. Most of time, users don't
+    need to interact with this class directly.
 
     .. note::
 
@@ -524,15 +525,16 @@ class DataIter(ABC):  # pylint: disable=too-many-instance-attributes
         keep the cache.
 
     on_host :
-        Whether the data should be cached on host memory instead of harddrive when using
-        GPU with external memory. If set to true, then the "external memory" would
-        simply be CPU (host) memory.
+        Whether the data should be cached on the host memory instead of the file system
+        when using GPU with external memory. When set to true (the default), the
+        "external memory" is the CPU (host) memory. See
+        :doc:`/tutorials/external_memory` for more info.
 
         .. versionadded:: 3.0.0
 
         .. warning::
 
-            This is still working in progress, not ready for test yet.
+            This is an experimental parameter.
 
     """
 
@@ -540,7 +542,7 @@ class DataIter(ABC):  # pylint: disable=too-many-instance-attributes
         self,
         cache_prefix: Optional[str] = None,
         release_data: bool = True,
-        on_host: bool = False,
+        on_host: bool = True,
     ) -> None:
         self.cache_prefix = cache_prefix
         self.on_host = on_host
@@ -663,7 +665,7 @@ class DataIter(ABC):  # pylint: disable=too-many-instance-attributes
         if self._release:
             self._temporary_data = None
         # pylint: disable=not-callable
-        return self._handle_exception(lambda: self.next(input_data), 0)
+        return self._handle_exception(lambda: int(self.next(input_data)), 0)
 
     @abstractmethod
     def reset(self) -> None:
@@ -671,7 +673,7 @@ class DataIter(ABC):  # pylint: disable=too-many-instance-attributes
         raise NotImplementedError()
 
     @abstractmethod
-    def next(self, input_data: Callable) -> int:
+    def next(self, input_data: Callable) -> bool:
         """Set the next batch of data.
 
         Parameters
@@ -683,7 +685,7 @@ class DataIter(ABC):  # pylint: disable=too-many-instance-attributes
 
         Returns
         -------
-        0 if there's no more batch, otherwise 1.
+        False if there's no more batch, otherwise True.
 
         """
         raise NotImplementedError()
@@ -905,7 +907,7 @@ class DMatrix:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             return
 
         handle, feature_names, feature_types = dispatch_data_backend(
-            data,
+            data=data,
             missing=self.missing,
             threads=self.nthread,
             feature_names=feature_names,
@@ -1680,9 +1682,12 @@ class QuantileDMatrix(DMatrix):
 class ExtMemQuantileDMatrix(DMatrix):
     """The external memory version of the :py:class:`QuantileDMatrix`.
 
+    See :doc:`/tutorials/external_memory` for explanation and usage examples, and
+    :py:class:`QuantileDMatrix` for parameter document.
+
     .. warning::
 
-        This is still working in progress, not ready for test yet.
+        This is an experimental feature.
 
     .. versionadded:: 3.0.0
 
@@ -1692,12 +1697,20 @@ class ExtMemQuantileDMatrix(DMatrix):
     def __init__(  # pylint: disable=super-init-not-called
         self,
         data: DataIter,
+        *,
         missing: Optional[float] = None,
         nthread: Optional[int] = None,
         max_bin: Optional[int] = None,
         ref: Optional[DMatrix] = None,
         enable_categorical: bool = False,
     ) -> None:
+        """
+        Parameters
+        ----------
+        data :
+            A user-defined :py:class:`DataIter` for loading data.
+
+        """
         self.max_bin = max_bin
         self.missing = missing if missing is not None else np.nan
         self.nthread = nthread if nthread is not None else -1
@@ -1713,6 +1726,7 @@ class ExtMemQuantileDMatrix(DMatrix):
             nthread=self.nthread,
             cache_prefix=it.cache_prefix if it.cache_prefix else "",
             on_host=it.on_host,
+            max_bin=self.max_bin,
         )
         handle = ctypes.c_void_p()
         reset_callback, next_callback = it.get_callbacks(enable_categorical)
@@ -2343,9 +2357,11 @@ class Booster:
         return self.eval_set([(data, name)], iteration)
 
     # pylint: disable=too-many-function-args
+    @_deprecate_positional_args
     def predict(
         self,
         data: DMatrix,
+        *,
         output_margin: bool = False,
         pred_leaf: bool = False,
         pred_contribs: bool = False,
@@ -2478,9 +2494,11 @@ class Booster:
         return _prediction_output(shape, dims, preds, False)
 
     # pylint: disable=too-many-statements
+    @_deprecate_positional_args
     def inplace_predict(
         self,
         data: DataType,
+        *,
         iteration_range: IterationRange = (0, 0),
         predict_type: str = "value",
         missing: float = np.nan,
@@ -3129,7 +3147,7 @@ class Booster:
 
         if feature_names is None and self.feature_names is not None:
             raise ValueError(
-                "training data did not have the following fields: "
+                "data did not contain feature names, but the following fields are expected: "
                 + ", ".join(self.feature_names)
             )
 

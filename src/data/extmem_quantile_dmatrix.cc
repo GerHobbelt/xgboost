@@ -13,6 +13,7 @@
 #include "proxy_dmatrix.h"          // for DataIterProxy, HostAdapterDispatch
 #include "quantile_dmatrix.h"       // for GetDataShape, MakeSketches
 #include "simple_batch_iterator.h"  // for SimpleBatchIteratorImpl
+#include "sparse_page_source.h"     // for MakeCachePrefix
 
 #if !defined(XGBOOST_USE_CUDA)
 #include "../common/common.h"  // for AssertGPUSupport
@@ -26,6 +27,7 @@ ExtMemQuantileDMatrix::ExtMemQuantileDMatrix(DataIterHandle iter_handle, DMatrix
                                              std::int32_t n_threads, std::string cache,
                                              bst_bin_t max_bin, bool on_host)
     : cache_prefix_{std::move(cache)}, on_host_{on_host} {
+  cache_prefix_ = MakeCachePrefix(cache_prefix_);
   auto iter = std::make_shared<DataIterProxy<DataIterResetCallback, XGDMatrixCallbackNext>>(
       iter_handle, reset, next);
   iter->Reset();
@@ -56,7 +58,7 @@ ExtMemQuantileDMatrix::~ExtMemQuantileDMatrix() {
 }
 
 BatchSet<ExtSparsePage> ExtMemQuantileDMatrix::GetExtBatches(Context const *, BatchParam const &) {
-  LOG(FATAL) << "Not implemented";
+  LOG(FATAL) << "Not implemented for `ExtMemQuantileDMatrix`.";
   auto begin_iter =
       BatchIterator<ExtSparsePage>(new SimpleBatchIteratorImpl<ExtSparsePage>(nullptr));
   return BatchSet<ExtSparsePage>{begin_iter};
@@ -90,8 +92,7 @@ void ExtMemQuantileDMatrix::InitFromCPU(
    */
   auto id = MakeCache(this, ".gradient_index.page", false, cache_prefix_, &cache_info_);
   this->ghist_index_source_ = std::make_unique<ExtGradientIndexPageSource>(
-      ctx, missing, &this->Info(), ext_info.n_batches, cache_info_.at(id), p, cuts, iter, proxy,
-      ext_info.base_rows);
+      ctx, missing, &this->Info(), cache_info_.at(id), p, cuts, iter, proxy, ext_info.base_rows);
 
   /**
    * Force initialize the cache and do some sanity checks along the way
@@ -119,7 +120,8 @@ BatchSet<GHistIndexMatrix> ExtMemQuantileDMatrix::GetGradientIndex(Context const
     CHECK(!detail::RegenGHist(param, batch_)) << error::InconsistentMaxBin();
   }
 
-  CHECK(this->ghist_index_source_);
+  CHECK(this->ghist_index_source_)
+      << "The `ExtMemQuantileDMatrix` is initialized using GPU data, cannot be used for CPU.";
   this->ghist_index_source_->Reset(param);
 
   if (!std::isnan(param.sparse_thresh) &&
