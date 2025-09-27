@@ -1,25 +1,18 @@
 import sys
 from copy import copy
+from typing import Any, Dict, Type
 
 import numpy as np
 import pytest
 from hypothesis import assume, given, settings, strategies
+from hypothesis.extra.pandas import column, data_frames, range_indexes
 
 import xgboost as xgb
 from xgboost import testing as tm
-from xgboost.compat import PANDAS_INSTALLED
-
-if PANDAS_INSTALLED:
-    from hypothesis.extra.pandas import column, data_frames, range_indexes
-else:
-
-    def noop(*args, **kwargs):
-        pass
-
-    column, data_frames, range_indexes = noop, noop, noop
+from xgboost.testing.predict import run_base_margin_vs_base_score, run_predict_leaf
 
 sys.path.append("tests/python")
-from test_predict import run_predict_leaf  # noqa
+
 from test_predict import run_threaded_predict  # noqa
 
 rng = np.random.RandomState(1994)
@@ -369,6 +362,7 @@ class TestGPUPredict:
         strategies.integers(1, 10), tm.make_dataset_strategy(), shap_parameter_strategy
     )
     @settings(deadline=None, max_examples=10, print_blob=True)
+    @pytest.mark.timeout(90)
     def test_shap_interactions(
         self, num_rounds: int, dataset: tm.TestDataset, param: dict
     ) -> None:
@@ -425,12 +419,19 @@ class TestGPUPredict:
             np.sum(shap, axis=len(shap.shape) - 1), margin, rtol=1e-3
         )
 
-    def test_predict_leaf_basic(self):
-        gpu_leaf = run_predict_leaf("gpu:0")
-        cpu_leaf = run_predict_leaf("cpu")
+    @pytest.mark.parametrize("DMatrixT", [xgb.DMatrix, xgb.QuantileDMatrix])
+    def test_predict_leaf_basic(self, DMatrixT: Type[xgb.DMatrix]) -> None:
+        gpu_leaf = run_predict_leaf("cuda", DMatrixT)
+        cpu_leaf = run_predict_leaf("cpu", DMatrixT)
         np.testing.assert_equal(gpu_leaf, cpu_leaf)
 
-    def run_predict_leaf_booster(self, param, num_rounds, dataset):
+    def run_predict_leaf_booster(
+        self,
+        param: Dict[str, Any],
+        num_rounds: int,
+        dataset: tm.TestDataset,
+        DMatrixT: Type[xgb.DMatrix],
+    ) -> None:
         param = dataset.set_params(param)
         m = dataset.get_dmat()
         booster = xgb.train(
@@ -444,15 +445,25 @@ class TestGPUPredict:
 
         np.testing.assert_equal(cpu_leaf, gpu_leaf)
 
-    @given(predict_parameter_strategy, tm.make_dataset_strategy())
+    @given(
+        predict_parameter_strategy,
+        tm.make_dataset_strategy(),
+        strategies.fixed_dictionaries(
+            {
+                "DMatrixT": strategies.sampled_from([xgb.DMatrix, xgb.QuantileDMatrix]),
+            }
+        ),
+    )
     @settings(deadline=None, max_examples=20, print_blob=True)
-    def test_predict_leaf_gbtree(self, param: dict, dataset: tm.TestDataset) -> None:
+    def test_predict_leaf_gbtree(
+        self, param: dict, dataset: tm.TestDataset, DMatrixT: Type[xgb.DMatrix]
+    ) -> None:
         # Unsupported for random forest
         if param.get("num_parallel_tree", 1) > 1 and dataset.name.endswith("-l1"):
             return
 
         param.update({"booster": "gbtree", "tree_method": "hist", "device": "cuda:0"})
-        self.run_predict_leaf_booster(param, 10, dataset)
+        self.run_predict_leaf_booster(param, 10, dataset, DMatrixT)
 
     @given(predict_parameter_strategy, tm.make_dataset_strategy())
     @settings(deadline=None, max_examples=20, print_blob=True)
@@ -462,7 +473,7 @@ class TestGPUPredict:
             return
 
         param.update({"booster": "dart", "tree_method": "hist", "device": "cuda:0"})
-        self.run_predict_leaf_booster(param, 10, dataset)
+        self.run_predict_leaf_booster(param, 10, dataset, xgb.DMatrix)
 
     @pytest.mark.skipif(**tm.no_sklearn())
     @pytest.mark.skipif(**tm.no_pandas())
@@ -613,3 +624,7 @@ class TestGPUPredict:
             X = cp.array(orig, dtype=dtype)
             with pytest.raises(ValueError):
                 booster.inplace_predict(X)
+
+
+def test_base_margin_vs_base_score() -> None:
+    run_base_margin_vs_base_score("cuda")

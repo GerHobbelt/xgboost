@@ -289,22 +289,12 @@ namespace {
 constexpr std::int32_t kBlockThreads = 1024;
 constexpr std::int32_t kItemsPerThread = 8;
 constexpr std::int32_t ItemsPerTile() { return kBlockThreads * kItemsPerThread; }
+template <auto Ker>
+using DeduceKernelT = std::decay_t<decltype(Ker)>;
 }  // namespace
 
 // Use auto deduction guide to workaround compiler error.
-template <typename Accessor,
-          auto GlobalCompr =
-              SharedMemHistKernel<Accessor, true, false, false, kBlockThreads, kItemsPerThread>,
-          auto Global =
-              SharedMemHistKernel<Accessor, false, false, false, kBlockThreads, kItemsPerThread>,
-          auto SharedCompr =
-              SharedMemHistKernel<Accessor, true, false, true, kBlockThreads, kItemsPerThread>,
-          auto Shared =
-              SharedMemHistKernel<Accessor, false, false, true, kBlockThreads, kItemsPerThread>,
-          auto GlobalDense =
-              SharedMemHistKernel<Accessor, true, true, false, kBlockThreads, kItemsPerThread>,
-          auto SharedDense =
-              SharedMemHistKernel<Accessor, true, true, true, kBlockThreads, kItemsPerThread>>
+template <typename Accessor>
 struct HistogramKernel {
   enum KernelType : std::size_t {
     kGlobalCompr = 0,
@@ -314,43 +304,57 @@ struct HistogramKernel {
     kGlobalDense = 4,
     kSharedDense = 5,
   };
-  // Kernel for working with dense Ellpack using the global memory.
-  decltype(GlobalCompr) global_compr_kernel{
+  // Kernel for working with compressed sparse Ellpack using the global memory.
+  using GlobalCompr = DeduceKernelT<
+      SharedMemHistKernel<Accessor, true, false, false, kBlockThreads, kItemsPerThread>>;
+  GlobalCompr global_compr_kernel{
       SharedMemHistKernel<Accessor, true, false, false, kBlockThreads, kItemsPerThread>};
   // Kernel for working with sparse Ellpack using the global memory.
-  decltype(Global) global_kernel{
+  using Global = DeduceKernelT<
+      SharedMemHistKernel<Accessor, false, false, false, kBlockThreads, kItemsPerThread>>;
+  Global global_kernel{
       SharedMemHistKernel<Accessor, false, false, false, kBlockThreads, kItemsPerThread>};
-  // Kernel for working with dense Ellpack using the shared memory.
-  decltype(SharedCompr) shared_compr_kernel{
+  // Kernel for working with compressed sparse Ellpack using the shared memory.
+  using SharedCompr = DeduceKernelT<
+      SharedMemHistKernel<Accessor, true, false, true, kBlockThreads, kItemsPerThread>>;
+  SharedCompr shared_compr_kernel{
       SharedMemHistKernel<Accessor, true, false, true, kBlockThreads, kItemsPerThread>};
   // Kernel for working with sparse Ellpack using the shared memory.
-  decltype(Shared) shared_kernel{
+  using Shared = DeduceKernelT<
+      SharedMemHistKernel<Accessor, false, false, true, kBlockThreads, kItemsPerThread>>;
+  Shared shared_kernel{
       SharedMemHistKernel<Accessor, false, false, true, kBlockThreads, kItemsPerThread>};
-  decltype(GlobalDense) global_dense_kernel{
+  // Kernel for working with compressed dense ellpack using the global memory
+  using GlobalDense = DeduceKernelT<
+      SharedMemHistKernel<Accessor, true, true, false, kBlockThreads, kItemsPerThread>>;
+  GlobalDense global_dense_kernel{
       SharedMemHistKernel<Accessor, true, true, false, kBlockThreads, kItemsPerThread>};
-  decltype(SharedDense) shared_dense_kernel{
+  // Kernel for working with compressed dense ellpack using the shared memory
+  using SharedDense = DeduceKernelT<
+      SharedMemHistKernel<Accessor, true, true, true, kBlockThreads, kItemsPerThread>>;
+  SharedDense shared_dense_kernel{
       SharedMemHistKernel<Accessor, true, true, true, kBlockThreads, kItemsPerThread>};
 
   bool shared{false};
   std::array<std::uint32_t, 6> grid_sizes{0, 0, 0, 0, 0, 0};
   std::size_t smem_size{0};
+  std::size_t const max_shared_memory;
   bool const force_global;
 
   HistogramKernel(Context const* ctx, FeatureGroupsAccessor const& feature_groups,
                   bool force_global_memory)
-      : force_global{force_global_memory} {
+      : max_shared_memory{dh::MaxSharedMemoryOptin(ctx->Ordinal())},
+        force_global{force_global_memory} {
     // Decide whether to use shared memory
     // Opt into maximum shared memory for the kernel if necessary
-    std::size_t max_shared_memory = dh::MaxSharedMemoryOptin(ctx->Ordinal());
-
-    this->smem_size = sizeof(GradientPairInt64) * feature_groups.max_group_bins;
-    this->shared = !force_global_memory && this->smem_size <= max_shared_memory;
+    this->smem_size = feature_groups.ShmemSize();
+    this->shared = !force_global_memory && this->smem_size <= this->max_shared_memory;
     this->smem_size = this->shared ? this->smem_size : 0;
 
     auto init = [&](auto& kernel, KernelType k) {
       if (this->shared) {
         dh::safe_cuda(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                           max_shared_memory));
+                                           this->max_shared_memory));
       }
 
       // determine the launch configuration
@@ -422,11 +426,12 @@ class DeviceHistogramDispatchAccessor {
     if (!this->kernel_->shared) {  // Use global memory
       CHECK_EQ(this->kernel_->smem_size, 0);
       if (matrix.IsDense()) {
-        CHECK(this->kernel_->force_global);
+        CHECK(this->kernel_->force_global ||
+              (feature_groups.ShmemSize() >= this->kernel_->max_shared_memory));
         launcher(this->kernel_->global_dense_kernel, this->kernel_->grid_sizes[K::kGlobalDense]);
       } else if (matrix.IsDenseCompressed()) {
-        // Dense must use shared memory except for testing.
-        CHECK(this->kernel_->force_global);
+        CHECK(this->kernel_->force_global ||
+              (feature_groups.ShmemSize() >= this->kernel_->max_shared_memory));
         launcher(this->kernel_->global_compr_kernel, this->kernel_->grid_sizes[K::kGlobalCompr]);
       } else {
         // Sparse

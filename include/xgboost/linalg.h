@@ -15,8 +15,8 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cinttypes>  // for int32_t
-#include <cstddef>    // for size_t
+#include <cstddef>  // for size_t
+#include <cstdint>  // for int32_t
 #include <limits>
 #include <string>
 #include <tuple>  // for make_tuple
@@ -223,23 +223,6 @@ void ReshapeImpl(size_t (&out_shape)[D], I &&s, S &&...rest) {
   static_assert(dim < D);
   out_shape[dim] = s;
   ReshapeImpl<dim + 1>(out_shape, std::forward<S>(rest)...);
-}
-
-template <typename Fn, typename Tup, size_t... I>
-LINALG_HD decltype(auto) constexpr Apply(Fn &&f, Tup &&t, std::index_sequence<I...>) {
-  return f(std::get<I>(t)...);
-}
-
-/**
- * C++ 17 style apply.
- *
- * \param f function to apply
- * \param t tuple of arguments
- */
-template <typename Fn, typename Tup>
-LINALG_HD decltype(auto) constexpr Apply(Fn &&f, Tup &&t) {
-  constexpr auto kSize = std::tuple_size<Tup>::value;
-  return Apply(std::forward<Fn>(f), std::forward<Tup>(t), std::make_index_sequence<kSize>{});
 }
 
 /**
@@ -608,13 +591,13 @@ auto MakeTensorView(Context const *ctx, Order order, common::Span<T, ext> data, 
 
 template <typename T, typename... S>
 auto MakeTensorView(Context const *ctx, HostDeviceVector<T> *data, S &&...shape) {
-  auto span = ctx->IsCPU() ? data->HostSpan() : data->DeviceSpan();
+  auto span = ctx->IsCUDA() ? data->DeviceSpan() : data->HostSpan();
   return MakeTensorView(ctx->Device(), span, std::forward<S>(shape)...);
 }
 
 template <typename T, typename... S>
 auto MakeTensorView(Context const *ctx, HostDeviceVector<T> const *data, S &&...shape) {
-  auto span = ctx->IsCPU() ? data->ConstHostSpan() : data->ConstDeviceSpan();
+  auto span = ctx->IsCUDA() ? data->ConstDeviceSpan() : data->ConstHostSpan();
   return MakeTensorView(ctx->Device(), span, std::forward<S>(shape)...);
 }
 

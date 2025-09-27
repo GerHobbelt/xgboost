@@ -12,6 +12,7 @@ from sklearn.utils.estimator_checks import parametrize_with_checks
 
 import xgboost as xgb
 from xgboost import testing as tm
+from xgboost.testing.data import get_california_housing
 from xgboost.testing.ranking import run_ranking_categorical, run_ranking_qid_df
 from xgboost.testing.shared import get_feature_weights, validate_data_initialization
 from xgboost.testing.updater import get_basescore
@@ -19,6 +20,8 @@ from xgboost.testing.with_skl import (
     run_boost_from_prediction_binary,
     run_boost_from_prediction_multi_clasas,
     run_housing_rf_regression,
+    run_intercept,
+    run_recoding,
 )
 
 rng = np.random.RandomState(1994)
@@ -463,11 +466,10 @@ def test_num_parallel_tree():
 
 
 def test_regression():
-    from sklearn.datasets import fetch_california_housing
     from sklearn.metrics import mean_squared_error
     from sklearn.model_selection import KFold
 
-    X, y = fetch_california_housing(return_X_y=True)
+    X, y = get_california_housing()
     kf = KFold(n_splits=2, shuffle=True, random_state=rng)
     for train_index, test_index in kf.split(X, y):
         xgb_model = xgb.XGBRegressor().fit(X[train_index], y[train_index])
@@ -500,10 +502,9 @@ def test_rf_regression():
 
 @pytest.mark.parametrize("tree_method", ["exact", "hist", "approx"])
 def test_parameter_tuning(tree_method: str) -> None:
-    from sklearn.datasets import fetch_california_housing
     from sklearn.model_selection import GridSearchCV
 
-    X, y = fetch_california_housing(return_X_y=True)
+    X, y = get_california_housing()
     reg = xgb.XGBRegressor(learning_rate=0.1, tree_method=tree_method)
     grid_cv = GridSearchCV(
         reg, {"max_depth": [2, 4], "n_estimators": [50, 200]}, cv=2, verbose=1
@@ -511,17 +512,16 @@ def test_parameter_tuning(tree_method: str) -> None:
     grid_cv.fit(X, y)
     assert grid_cv.best_score_ < 0.7
     assert grid_cv.best_params_ == {
-        "n_estimators": 200,
-        "max_depth": 4 if tree_method == "exact" else 2,
+        "n_estimators": 50,
+        "max_depth": 2,
     }
 
 
 def test_regression_with_custom_objective():
-    from sklearn.datasets import fetch_california_housing
     from sklearn.metrics import mean_squared_error
     from sklearn.model_selection import KFold
 
-    X, y = fetch_california_housing(return_X_y=True)
+    X, y = get_california_housing()
     kf = KFold(n_splits=2, shuffle=True, random_state=rng)
     for train_index, test_index in kf.split(X, y):
         xgb_model = xgb.XGBRegressor(objective=tm.ls_obj).fit(
@@ -880,7 +880,7 @@ def test_sklearn_get_default_params():
     assert cls.get_params()["base_score"] is None
     cls.fit(X[:4, ...], y[:4, ...])
     base_score = get_basescore(cls)
-    np.testing.assert_equal(base_score, 0.5)
+    np.testing.assert_equal(base_score, [0.5])
 
 
 def run_validation_weights(model):
@@ -1397,6 +1397,29 @@ def test_evaluation_metric():
         clf.fit(X, y, eval_set=[(X, y)])
 
 
+def test_mixed_metrics() -> None:
+    from sklearn.datasets import make_classification
+    from sklearn.metrics import hamming_loss, hinge_loss, log_loss
+
+    X, y = make_classification(random_state=2025)
+
+    clf = xgb.XGBClassifier(eval_metric=["logloss", hinge_loss], n_estimators=2)
+    clf.fit(X, y, eval_set=[(X, y)])
+    results = clf.evals_result()["validation_0"]
+    assert "logloss" in results
+    assert "hinge_loss" in results
+
+    clf = xgb.XGBClassifier(eval_metric=[hamming_loss, log_loss], n_estimators=2)
+    with pytest.raises(
+        NotImplementedError, match="multiple custom metrics is not yet supported."
+    ):
+        clf.fit(X, y, eval_set=[(X, y)])
+
+    clf = xgb.XGBClassifier(eval_metric=[123, log_loss], n_estimators=2)
+    with pytest.raises(TypeError, match="Invalid type for the `eval_metric`"):
+        clf.fit(X, y, eval_set=[(X, y)])
+
+
 def test_weighted_evaluation_metric():
     from sklearn.datasets import make_hastie_10_2
     from sklearn.metrics import log_loss
@@ -1438,18 +1461,7 @@ def test_weighted_evaluation_metric():
 
 
 def test_intercept() -> None:
-    X, y, w = tm.make_regression(256, 3, use_cupy=False)
-    reg = xgb.XGBRegressor()
-    reg.fit(X, y, sample_weight=w)
-    result = reg.intercept_
-    assert result.dtype == np.float32
-    assert result[0] < 0.5
-
-    reg = xgb.XGBRegressor(booster="gblinear")
-    reg.fit(X, y, sample_weight=w)
-    result = reg.intercept_
-    assert result.dtype == np.float32
-    assert result[0] < 0.5
+    run_intercept("cpu")
 
 
 def test_fit_none() -> None:
@@ -1544,3 +1556,27 @@ def test_doc_link() -> None:
         name = est.__class__.__name__
         link = est._get_doc_link()
         assert f"xgboost.{name}" in link
+
+
+def test_apply_method() -> None:
+    import pandas as pd
+
+    X_num = np.random.rand(5, 5)
+    df = pd.DataFrame(X_num, columns=[f"f{i}" for i in range(X_num.shape[1])])
+    df["test"] = pd.Series(
+        ["one", "two", "three", "four", "five"], dtype="category"
+    )  # <- categorical column
+    y = np.arange(len(df))
+
+    model = xgb.XGBClassifier(enable_categorical=True)
+    model.fit(df, y)
+
+    model.apply(df)  # this must not raise
+
+    model.set_params(enable_categorical=False)
+    with pytest.raises(ValueError, match="`enable_categorical`"):
+        model.apply(df)
+
+
+def test_recoding() -> None:
+    run_recoding("cpu")

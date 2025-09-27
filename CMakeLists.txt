@@ -53,6 +53,7 @@ option(USE_OPENMP "Build with OpenMP support." ON)
 option(BUILD_STATIC_LIB "Build static library" OFF)
 option(BUILD_DEPRECATED_CLI "Build the deprecated command line interface" OFF)
 option(FORCE_SHARED_CRT "Build with dynamic CRT on Windows (/MD)" OFF)
+option(BUILD_WITH_GIT_HASH "Add a short git hash to the build info." OFF)
 ## Bindings
 option(JVM_BINDINGS "Build JVM bindings" OFF)
 option(R_LIB "Build shared library for R package" OFF)
@@ -363,7 +364,7 @@ if(PLUGIN_SYCL)
   set(CMAKE_CXX_LINK_EXECUTABLE
       "icpx <FLAGS> <CMAKE_CXX_LINK_FLAGS> -qopenmp <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
   set(CMAKE_CXX_CREATE_SHARED_LIBRARY
-      "icpx <CMAKE_SHARED_LIBRARY_CXX_FLAGS> -qopenmp <LANGUAGE_COMPILE_FLAGS> \
+      "icpx -shared <CMAKE_SHARED_LIBRARY_CXX_FLAGS> -qopenmp <LANGUAGE_COMPILE_FLAGS> \
       <CMAKE_SHARED_LIBRARY_CREATE_CXX_FLAGS> <SONAME_FLAG>,<TARGET_SONAME> \
       -o <TARGET> <OBJECTS> <LINK_LIBRARIES>")
 endif()
@@ -416,7 +417,7 @@ if(JVM_BINDINGS)
   xgboost_target_defs(xgboost4j)
 endif()
 
-if(USE_OPENMP AND APPLE)
+if(USE_OPENMP AND APPLE AND NOT BUILD_STATIC_LIB)
   patch_openmp_path_macos(xgboost libxgboost)
 endif()
 

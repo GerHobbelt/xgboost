@@ -396,6 +396,7 @@ EllpackPageImpl::EllpackPageImpl(Context const* ctx, AdapterBatch batch, float m
       std::shared_ptr<common::HistogramCuts const> cuts);
 
 ELLPACK_BATCH_SPECIALIZE(data::CudfAdapterBatch)
+ELLPACK_BATCH_SPECIALIZE(data::EncCudfAdapterBatch)
 ELLPACK_BATCH_SPECIALIZE(data::CupyAdapterBatch)
 
 #undef ELLPACK_BATCH_SPECIALIZE
@@ -461,6 +462,10 @@ EllpackPageImpl::EllpackPageImpl(Context const* ctx, GHistIndexMatrix const& pag
       info{CalcNumSymbols(
           ctx,
           [&] {
+            if (page.Size() == 0) {
+              return static_cast<typename decltype(page.row_ptr)::value_type>(0);
+            }
+            CHECK_GE(page.row_ptr.size(), 2);
             auto it = common::MakeIndexTransformIter(
                 [&](bst_idx_t i) { return page.row_ptr[i + 1] - page.row_ptr[i]; });
             return *std::max_element(it, it + page.Size());

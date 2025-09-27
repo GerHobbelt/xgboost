@@ -217,12 +217,17 @@ void TestInplacePrediction(Context const *ctx, std::shared_ptr<DMatrix> x, bst_i
   auto& h_pred_0 = predict_0.HostVector();
   auto& h_pred_1 = predict_1.HostVector();
 
+  Json config {Object{}};
+  learner->SaveConfig(&config);
+  auto base_score = GetBaseScore(config);
+
   ASSERT_EQ(h_pred.size(), rows * kClasses);
   ASSERT_EQ(h_pred.size(), h_pred_0.size());
   ASSERT_EQ(h_pred.size(), h_pred_1.size());
   for (size_t i = 0; i < h_pred.size(); ++i) {
     // Need to remove the global bias here.
-    ASSERT_NEAR(h_pred[i], h_pred_0[i] + h_pred_1[i] - 0.5f, kRtEps);
+    auto j = i % kClasses;
+    ASSERT_NEAR(h_pred[i], h_pred_0[i] + h_pred_1[i] - base_score.at(j), kRtEps);
   }
 
   learner->SetParam("device", "cpu");
@@ -349,7 +354,7 @@ void TestCategoricalPrediction(bool use_gpu, bool is_column_split) {
   size_t constexpr kCols = 10;
   PredictionCacheEntry out_predictions;
 
-  LearnerModelParam mparam{MakeMP(kCols, .5, 1)};
+  LearnerModelParam mparam{MakeMP(kCols, .5, 1, ctx.Device())};
   uint32_t split_ind = 3;
   bst_cat_t split_cat = 4;
   float left_weight = 1.3f;
@@ -392,7 +397,7 @@ void TestCategoricalPredictLeaf(Context const *ctx, bool is_column_split) {
   size_t constexpr kCols = 10;
   PredictionCacheEntry out_predictions;
 
-  LearnerModelParam mparam{MakeMP(kCols, .5, 1)};
+  LearnerModelParam mparam{MakeMP(kCols, .5, 1, ctx->Device())};
 
   uint32_t split_ind = 3;
   bst_cat_t split_cat = 4;
@@ -619,7 +624,7 @@ void TestSparsePrediction(Context const *ctx, float sparsity) {
   learner->Configure();
 
   if (ctx->IsCUDA()) {
-    learner->SetParam("tree_method", "gpu_hist");
+    learner->SetParam("tree_method", "hist");
     learner->SetParam("device", ctx->Device().Name());
   }
   learner->Predict(Xy, false, &sparse_predt, 0, 0);
@@ -637,13 +642,13 @@ void TestSparsePrediction(Context const *ctx, float sparsity) {
   }
 
   learner->SetParam("tree_method", "hist");
-  learner->SetParam("gpu_id", "-1");
+  learner->SetParam("device", "cpu");
   // Xcode_12.4 doesn't compile with `std::make_shared`.
   auto dense = std::shared_ptr<DMatrix>(new data::DMatrixProxy{});
   auto array_interface = GetArrayInterface(&with_nan, kRows, kCols);
   std::string arr_str;
   Json::Dump(array_interface, &arr_str);
-  dynamic_cast<data::DMatrixProxy *>(dense.get())->SetArrayData(arr_str.data());
+  dynamic_cast<data::DMatrixProxy *>(dense.get())->SetArray(arr_str.data());
   HostDeviceVector<float> *p_dense_predt;
   learner->InplacePredict(dense, PredictionType::kValue, std::numeric_limits<float>::quiet_NaN(),
                           &p_dense_predt, 0, 0);
@@ -775,7 +780,7 @@ void TestVectorLeafPrediction(Context const *ctx) {
       std::string str;
       Json::Dump(arr, &str);
       auto proxy = std::shared_ptr<DMatrix>(new data::DMatrixProxy{});
-      dynamic_cast<data::DMatrixProxy *>(proxy.get())->SetArrayData(str.data());
+      dynamic_cast<data::DMatrixProxy *>(proxy.get())->SetArray(str.data());
       cpu_predictor->InplacePredict(proxy, model, std::numeric_limits<float>::quiet_NaN(),
                                     &predt_cache, 0, 1);
       auto const &h_predt = predt_cache.predictions.HostVector();

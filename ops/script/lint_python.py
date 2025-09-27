@@ -17,6 +17,8 @@ class LintersPaths:
         # core
         "python-package/",
         # tests
+        "tests/python/generate_models.py",
+        "tests/python/test_model_compatibility.py",
         "tests/python/test_config.py",
         "tests/python/test_callback.py",
         "tests/python/test_collective.py",
@@ -59,6 +61,7 @@ class LintersPaths:
         "demo/guide-python/categorical.py",
         "demo/guide-python/cat_pipeline.py",
         "demo/guide-python/cross_validation.py",
+        "demo/guide-python/custom_softmax.py",
         "demo/guide-python/feature_weights.py",
         "demo/guide-python/model_parser.py",
         "demo/guide-python/sklearn_parallel.py",
@@ -98,6 +101,8 @@ class LintersPaths:
         # core
         "python-package/",
         # tests
+        "tests/python/generate_models.py",
+        "tests/python/test_model_compatibility.py",
         "tests/python/test_collective.py",
         "tests/python/test_demos.py",
         "tests/python/test_data_iterator.py",
@@ -108,6 +113,7 @@ class LintersPaths:
         "tests/python/test_interaction_constraints.py",
         "tests/python-gpu/test_gpu_callbacks.py",
         "tests/python-gpu/test_gpu_data_iterator.py",
+        "tests/python-gpu/test_gpu_ordinal.py",
         "tests/python-gpu/load_pickle.py",
         "tests/python-gpu/test_gpu_training_continuation.py",
         "tests/python-gpu/test_gpu_plotting.py",
@@ -121,11 +127,13 @@ class LintersPaths:
         "tests/test_distributed/test_gpu_with_dask/",
         # demo
         "demo/dask/",
+        "demo/guide-python/custom_softmax.py",
         "demo/guide-python/external_memory.py",
         "demo/guide-python/distributed_extmem_basic.py",
         "demo/guide-python/sklearn_examples.py",
         "demo/guide-python/continuation.py",
         "demo/guide-python/callbacks.py",
+        "demo/guide-python/update_process.py",
         "demo/guide-python/cat_in_the_dat.py",
         "demo/guide-python/categorical.py",
         "demo/guide-python/cat_pipeline.py",

@@ -62,11 +62,6 @@ std::string MapTreeMethodToUpdaters(Context const* ctx, TreeMethod tree_method) 
     case TreeMethod::kExact:
       CHECK(ctx->IsCPU()) << "The `exact` tree method is not supported on GPU.";
       return "grow_colmaker,prune";
-    case TreeMethod::kGPUHist: {
-      common::AssertGPUSupport();
-      error::WarnDeprecatedGPUHist();
-      return "grow_gpu_hist";
-    }
     default:
       auto tm = static_cast<std::underlying_type_t<TreeMethod>>(tree_method);
       LOG(FATAL) << "Unknown tree_method: `" << tm << "`.";
@@ -356,20 +351,6 @@ void GBTree::LoadConfig(Json const& in) {
   // e.g. updating a model, then saving and loading it would result in an empty model
   tparam_.process_type = TreeProcessType::kDefault;
   std::int32_t const n_gpus = curt::AllVisibleGPUs();
-
-  auto msg = StringView{
-      R"(
-  Loading from a raw memory buffer (like pickle in Python, RDS in R) on a CPU-only
-  machine. Consider using `save_model/load_model` instead. See:
-
-    https://xgboost.readthedocs.io/en/latest/tutorials/saving_model.html
-
-  for more details about differences between saving model and serializing.)"};
-
-  if (n_gpus == 0 && tparam_.tree_method == TreeMethod::kGPUHist) {
-    tparam_.UpdateAllowUnknown(Args{{"tree_method", "hist"}});
-    LOG(WARNING) << msg << "  Changing `tree_method` to `hist`.";
-  }
 
   std::vector<Json> updater_seq;
   if (IsA<Object>(in["updater"])) {
@@ -717,20 +698,6 @@ class Dart : public GBTree {
     }
   }
 
-  void Load(dmlc::Stream* fi) override {
-    GBTree::Load(fi);
-    weight_drop_.resize(model_.param.num_trees);
-    if (model_.param.num_trees != 0) {
-      fi->Read(&weight_drop_);
-    }
-  }
-  void Save(dmlc::Stream* fo) const override {
-    GBTree::Save(fo);
-    if (weight_drop_.size() != 0) {
-      fo->Write(weight_drop_);
-    }
-  }
-
   void LoadConfig(Json const& in) override {
     CHECK_EQ(get<String>(in["name"]), "dart");
     auto const& gbtree = in["gbtree"];
@@ -884,9 +851,10 @@ class Dart : public GBTree {
         auto base_score = model_.learner_model_param->BaseScore(DeviceOrd::CPU());
         auto& h_predts = predts.predictions.HostVector();
         auto& h_out_predts = p_out_preds->predictions.HostVector();
+        CHECK_EQ(base_score.Size(), n_groups);
         common::ParallelFor(n_rows, ctx_->Threads(), [&](auto ridx) {
           const size_t offset = ridx * n_groups + group;
-          h_out_predts[offset] += (h_predts[offset] - base_score(0)) * w;
+          h_out_predts[offset] += (h_predts[offset] - base_score(group)) * w;
         });
       }
     }

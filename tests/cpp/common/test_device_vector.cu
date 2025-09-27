@@ -108,13 +108,13 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST(TestVirtualMem, Version) {
   std::int32_t major, minor;
-  xgboost::curt::DrVersion(&major, &minor);
+  xgboost::curt::GetDrVersionGlobal(&major, &minor);
   LOG(INFO) << "Latest supported CUDA version by the driver:" << major << "." << minor;
   PinnedMemory pinned;
 #if defined(xgboost_IS_WIN)
   ASSERT_FALSE(pinned.IsVm());
 #else  // defined(xgboost_IS_WIN)
-  if (major >= 12 && minor >= 5) {
+  if (major == 12 && minor >= 5 || major > 12) {
     ASSERT_TRUE(pinned.IsVm());
   } else {
     ASSERT_FALSE(pinned.IsVm());
