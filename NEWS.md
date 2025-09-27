@@ -2003,7 +2003,7 @@ This release marks a major milestone for the XGBoost project.
 * Remove dead code in `exact` algorithm (#5034, #5105)
 * Unify integer types used for row and column indices (#5034)
 * Extract feature interaction constraint from `SplitEvaluator` class. (#5034)
-* [Breaking] De-duplicate paramters and docstrings in the constructors of Scikit-Learn models (#5130)
+* [Breaking] De-duplicate parameters and docstrings in the constructors of Scikit-Learn models (#5130)
 * Remove benchmark code from GPU tests (#5141)
 * Clean up Python 2 compatibility code. (#5161)
 * Extensible binary serialization format for `DMatrix::MetaInfo` (#5187). This will be useful for implementing censored labels for survival analysis applications.
