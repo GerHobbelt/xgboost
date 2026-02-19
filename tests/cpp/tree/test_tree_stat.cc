@@ -3,14 +3,16 @@
  */
 #include <gtest/gtest.h>
 #include <xgboost/context.h>       // for Context
+#include <xgboost/gradient.h>      // for GradientContainer
 #include <xgboost/task.h>          // for ObjInfo
 #include <xgboost/tree_model.h>    // for RegTree
 #include <xgboost/tree_updater.h>  // for TreeUpdater
 
 #include <memory>  // for unique_ptr
 
-#include "../../../src/tree/io_utils.h"  // for DftBadValue
-#include "../../../src/tree/param.h"     // for TrainParam
+#include "../../../src/tree/io_utils.h"   // for DftBadValue
+#include "../../../src/tree/param.h"      // for TrainParam
+#include "../../../src/tree/tree_view.h"  // for WalkTree
 #include "../helpers.h"
 
 namespace xgboost {
@@ -20,16 +22,15 @@ namespace xgboost {
 class UpdaterTreeStatTest : public ::testing::Test {
  protected:
   std::shared_ptr<DMatrix> p_dmat_;
-  linalg::Matrix<GradientPair> gpairs_;
+  GradientContainer gpairs_;
   size_t constexpr static kRows = 10;
   size_t constexpr static kCols = 10;
 
  protected:
   void SetUp() override {
     p_dmat_ = RandomDataGenerator(kRows, kCols, .5f).GenerateDMatrix(true);
-    auto g = GenerateRandomGradients(kRows);
-    gpairs_.Reshape(kRows, 1);
-    gpairs_.Data()->Copy(g);
+    Context ctx;
+    gpairs_ = GenerateRandomGradients(&ctx, kRows, 1);
   }
 
   void RunTest(Context const* ctx, std::string updater) {
@@ -43,10 +44,11 @@ class UpdaterTreeStatTest : public ::testing::Test {
     std::vector<HostDeviceVector<bst_node_t>> position(1);
     up->Update(&param, &gpairs_, p_dmat_.get(), position, {&tree});
 
-    tree.WalkTree([&tree](bst_node_t nidx) {
-      if (tree[nidx].IsLeaf()) {
+    auto sc_tree = tree.HostScView();
+    sc_tree.WalkTree([&sc_tree](bst_node_t nidx) {
+      if (sc_tree.IsLeaf(nidx)) {
         // 1.0 is the default `min_child_weight`.
-        CHECK_GE(tree.Stat(nidx).sum_hess, 1.0);
+        CHECK_GE(sc_tree.Stat(nidx).sum_hess, 1.0);
       }
       return true;
     });
@@ -97,7 +99,7 @@ class TestSplitWithEta : public ::testing::Test {
       updater->Configure({});
 
       auto grad = GenerateRandomGradients(ctx, Xy->Info().num_row_, n_targets);
-      CHECK_EQ(grad.Shape(1), n_targets);
+      CHECK_EQ(grad.gpair.Shape(1), n_targets);
       tree::TrainParam param;
       param.Init(Args{{"learning_rate", std::to_string(eta)}});
       HostDeviceVector<bst_node_t> position;
@@ -117,32 +119,35 @@ class TestSplitWithEta : public ::testing::Test {
     CHECK_GE(p_tree0->NumExtraNodes(), 32);
 
     bst_node_t n_nodes{0};
-    p_tree0->WalkTree([&](bst_node_t nidx) {
-      if (p_tree0->IsLeaf(nidx)) {
-        CHECK(p_tree1->IsLeaf(nidx));
-        if (p_tree0->IsMultiTarget()) {
-          CHECK(p_tree1->IsMultiTarget());
-          auto leaf_0 = p_tree0->GetMultiTargetTree()->LeafValue(nidx);
-          auto leaf_1 = p_tree1->GetMultiTargetTree()->LeafValue(nidx);
-          CHECK_EQ(leaf_0.Size(), leaf_1.Size());
-          for (std::size_t i = 0; i < leaf_0.Size(); ++i) {
-            CHECK_EQ(leaf_0(i) * eta_ratio, leaf_1(i));
+    tree::WalkTree(
+        *p_tree0,
+        [&](auto const& tree0, auto const& tree1, bst_node_t nidx) {
+          if (tree0.IsLeaf(nidx)) {
+            CHECK(tree1.IsLeaf(nidx));
+            if (p_tree0->IsMultiTarget()) {
+              CHECK(p_tree1->IsMultiTarget());
+              auto leaf_0 = p_tree0->GetMultiTargetTree()->LeafValue(nidx);
+              auto leaf_1 = p_tree1->GetMultiTargetTree()->LeafValue(nidx);
+              CHECK_EQ(leaf_0.Size(), leaf_1.Size());
+              for (std::size_t i = 0; i < leaf_0.Size(); ++i) {
+                CHECK_EQ(leaf_0(i) * eta_ratio, leaf_1(i));
+              }
+              CHECK_EQ(DftBadValue(), tree0.SplitCond(nidx));
+              CHECK_EQ(DftBadValue(), tree1.SplitCond(nidx));
+            } else {
+              // NON-mt tree reuses split cond for leaf value.
+              auto leaf_0 = tree0.SplitCond(nidx);
+              auto leaf_1 = tree1.SplitCond(nidx);
+              CHECK_EQ(leaf_0 * eta_ratio, leaf_1);
+            }
+          } else {
+            CHECK(!tree1.IsLeaf(nidx));
+            CHECK_EQ(tree0.SplitCond(nidx), tree1.SplitCond(nidx));
           }
-          CHECK_EQ(DftBadValue(), p_tree0->SplitCond(nidx));
-          CHECK_EQ(DftBadValue(), p_tree1->SplitCond(nidx));
-        } else {
-          // NON-mt tree reuses split cond for leaf value.
-          auto leaf_0 = p_tree0->SplitCond(nidx);
-          auto leaf_1 = p_tree1->SplitCond(nidx);
-          CHECK_EQ(leaf_0 * eta_ratio, leaf_1);
-        }
-      } else {
-        CHECK(!p_tree1->IsLeaf(nidx));
-        CHECK_EQ(p_tree0->SplitCond(nidx), p_tree1->SplitCond(nidx));
-      }
-      n_nodes++;
-      return true;
-    });
+          n_nodes++;
+          return true;
+        },
+        *p_tree1);
     ASSERT_EQ(n_nodes, p_tree0->NumExtraNodes() + 1);
   }
 };
@@ -187,15 +192,15 @@ TEST_F(TestSplitWithEta, GpuApprox) {
 
 class TestMinSplitLoss : public ::testing::Test {
   std::shared_ptr<DMatrix> dmat_;
-  linalg::Matrix<GradientPair> gpair_;
+  GradientContainer gpair_;
 
   void SetUp() override {
     constexpr size_t kRows = 32;
     constexpr size_t kCols = 16;
     constexpr float kSparsity = 0.6;
     dmat_ = RandomDataGenerator(kRows, kCols, kSparsity).Seed(3).GenerateDMatrix();
-    gpair_.Reshape(kRows, 1);
-    gpair_.Data()->Copy(GenerateRandomGradients(kRows));
+    Context ctx;
+    gpair_ = GenerateRandomGradients(&ctx, kRows, 1);
   }
 
   std::int32_t Update(Context const* ctx, std::string updater, float gamma) {

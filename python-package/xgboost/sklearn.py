@@ -1,4 +1,4 @@
-# pylint: disable=too-many-arguments, too-many-locals, invalid-name, fixme, too-many-lines
+# pylint: disable=too-many-arguments, too-many-locals, fixme, too-many-lines
 """Scikit-Learn Wrapper interface for XGBoost."""
 
 import collections
@@ -64,6 +64,7 @@ from .core import (
     _py_version,
 )
 from .data import (
+    CAT_T,
     _is_cudf_df,
     _is_cudf_ser,
     _is_cupy_alike,
@@ -103,7 +104,7 @@ class _SklObjWProto(Protocol):
         self,
         y_true: ArrayLike,
         y_pred: ArrayLike,
-        sample_weight: Optional[ArrayLike],
+        sample_weight: Optional[ArrayLike] = None,
     ) -> Tuple[ArrayLike, ArrayLike]: ...
 
 
@@ -1057,7 +1058,7 @@ class XGBModel(XGBModelBase):
         #                     XGBRegressor -> XGBModel -> BaseEstimator
         #                                     XGBModel -> BaseEstimator
         #
-        params = super().get_params(deep)
+        params = super().get_params(deep)  # pylint: disable=no-member
         cp = copy.copy(self)
         # If the immediate parent defines get_params(), use that.
         if callable(getattr(cp.__class__.__bases__[0], "get_params", None)):
@@ -1133,7 +1134,6 @@ class XGBModel(XGBModelBase):
                     f"{self._get_type()}, got: {t}"
                 )
 
-        self.feature_types = self.get_booster().feature_types
         self.get_booster().set_attr(scikit_learn=None)
         config = json.loads(self.get_booster().save_config())
         self._load_model_attributes(config)
@@ -1152,6 +1152,9 @@ class XGBModel(XGBModelBase):
             config["learner"]["learner_model_param"]["base_score"]
         )
         self.feature_types = booster.feature_types
+        self.enable_categorical = self.feature_types is not None and any(
+            ft == CAT_T for ft in self.feature_types
+        )
 
         if is_classifier(self):
             self.n_classes_ = int(config["learner"]["learner_model_param"]["num_class"])
@@ -1277,7 +1280,7 @@ class XGBModel(XGBModelBase):
         base_margin_eval_set: Optional[Sequence[ArrayLike]] = None,
         feature_weights: Optional[ArrayLike] = None,
     ) -> "XGBModel":
-        # pylint: disable=invalid-name,attribute-defined-outside-init
+        # pylint: disable=attribute-defined-outside-init
         """Fit gradient boosting model.
 
         Note that calling ``fit()`` multiple times will cause the model object to be
@@ -1692,7 +1695,7 @@ def _cls_predict_proba(n_classes: int, prediction: PredtT, vstack: Callable) -> 
 """,
 )
 class XGBClassifier(XGBClassifierBase, XGBModel):
-    # pylint: disable=missing-docstring,invalid-name,too-many-instance-attributes
+    # pylint: disable=missing-docstring,too-many-instance-attributes
     @_deprecate_positional_args
     def __init__(
         self,
@@ -2140,7 +2143,7 @@ See :doc:`Learning to Rank </tutorials/learning_to_rank>` for an introducion.
         :py:meth:`fit` for more info.""",
 )
 class XGBRanker(XGBRankerMixIn, XGBModel):
-    # pylint: disable=missing-docstring,too-many-arguments,invalid-name
+    # pylint: disable=missing-docstring,too-many-arguments
     @_deprecate_positional_args
     def __init__(self, *, objective: str = "rank:ndcg", **kwargs: Any):
         super().__init__(objective=objective, **kwargs)

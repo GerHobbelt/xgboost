@@ -411,7 +411,7 @@ template <typename T>
 using caching_device_vector = thrust::device_vector<T, XGBCachingDeviceAllocator<T>>;  // NOLINT
 
 /**
- * @brief Container class that doesn't initialize the data when RMM is used.
+ * @brief Container class that doesn't initialize the data.
  */
 template <typename T, bool is_caching>
 class DeviceUVectorImpl {
@@ -467,7 +467,9 @@ class DeviceUVectorImpl {
     this->size_ = n;
     this->capacity_ = n;
 
-    std::swap(this->data_, new_ptr);
+    this->data_ = std::move(new_ptr);
+    // swap failed with CTK12.8
+    // std::swap(this->data_, new_ptr);
   }
   // Resize with init
   void resize(std::size_t n, T const &v) {  // NOLINT

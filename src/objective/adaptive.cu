@@ -12,6 +12,7 @@
 #include "../common/device_helpers.cuh"
 #include "../common/stats.cuh"
 #include "../tree/sample_position.h"  // for SamplePosition
+#include "../tree/tree_view.h"        // for WalkTree
 #include "adaptive.h"
 #include "xgboost/context.h"
 
@@ -40,8 +41,8 @@ void EncodeTreeLeafDevice(Context const* ctx, common::Span<bst_node_t const> pos
                    sorted_position.cbegin();
   if (beg_pos == sorted_position.size()) {
     auto& leaf = p_nidx->HostVector();
-    tree.WalkTree([&](bst_node_t nidx) {
-      if (tree[nidx].IsLeaf()) {
+    tree::WalkTree(tree, [&](auto const& tree, bst_node_t nidx) {
+      if (tree.IsLeaf(nidx)) {
         leaf.push_back(nidx);
       }
       return true;
@@ -122,8 +123,8 @@ void EncodeTreeLeafDevice(Context const* ctx, common::Span<bst_node_t const> pos
     nidx.Resize(*h_num_runs);
 
     std::vector<bst_node_t> leaves;
-    tree.WalkTree([&](bst_node_t nidx) {
-      if (tree[nidx].IsLeaf()) {
+    tree::WalkTree(tree, [&](auto const& tree, bst_node_t nidx) {
+      if (tree.IsLeaf(nidx)) {
         leaves.push_back(nidx);
       }
       return true;
@@ -143,7 +144,7 @@ void EncodeTreeLeafDevice(Context const* ctx, common::Span<bst_node_t const> pos
 }
 
 void UpdateTreeLeafDevice(Context const* ctx, common::Span<bst_node_t const> position,
-                          std::int32_t group_idx, MetaInfo const& info, float learning_rate,
+                          bst_target_t group_idx, MetaInfo const& info, float learning_rate,
                           HostDeviceVector<float> const& predt, float alpha, RegTree* p_tree) {
   dh::safe_cuda(cudaSetDevice(ctx->Ordinal()));
   dh::device_vector<size_t> ridx;

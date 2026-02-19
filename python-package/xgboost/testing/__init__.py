@@ -3,7 +3,7 @@ change without notice.
 
 """
 
-# pylint: disable=invalid-name,missing-function-docstring
+# pylint: disable=missing-function-docstring
 import importlib.util
 import os
 import platform
@@ -188,10 +188,6 @@ def no_cupy() -> PytestSkip:
 
 def no_dask_cudf() -> PytestSkip:
     return no_mod("dask_cudf")
-
-
-def no_json_schema() -> PytestSkip:
-    return no_mod("jsonschema")
 
 
 def no_graphviz() -> PytestSkip:
@@ -625,7 +621,7 @@ def ls_obj(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Least squared error."""
     grad = y_pred - y_true
-    hess = np.ones(len(y_true))
+    hess = np.ones(grad.shape)
     if sample_weight is not None:
         grad *= sample_weight
         hess *= sample_weight
