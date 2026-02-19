@@ -1,5 +1,5 @@
 /**
- * Copyright 2014-2025, XGBoost Contributors
+ * Copyright 2014-2026, XGBoost Contributors
  * \file updater_colmaker.cc
  * \brief use columnwise update to construct a tree
  * \author Tianqi Chen
@@ -8,7 +8,8 @@
 #include <cmath>
 #include <vector>
 
-#include "../common/error_msg.h"  // for NoCategorical
+#include "../collective/communicator-inl.h"  // for IsDistributed
+#include "../common/error_msg.h"             // for NoCategorical
 #include "../common/random.h"
 #include "constraints.h"
 #include "param.h"
@@ -239,9 +240,9 @@ class ColMaker: public TreeUpdater {
         if (!column_sampler_) {
           column_sampler_ = common::MakeColumnSampler(ctx_);
         }
-        column_sampler_->Init(
-            ctx_, fmat.Info().num_col_, fmat.Info().feature_weights.ConstHostVector(),
-            param_.colsample_bynode, param_.colsample_bylevel, param_.colsample_bytree);
+        column_sampler_->Init(ctx_, fmat.Info().num_col_, fmat.Info().feature_weights,
+                              param_.colsample_bynode, param_.colsample_bylevel,
+                              param_.colsample_bytree);
       }
       {
         // setup temp space for each thread
@@ -370,7 +371,6 @@ class ColMaker: public TreeUpdater {
         const std::vector<GradientPair> &gpair,
         std::vector<ThreadEntry> &temp, // NOLINT(*)
         TreeEvaluator::SplitEvaluator<TrainParam> const &evaluator) const {
-      CHECK(param_.cache_opt) << "Support for `cache_opt' is removed in 1.0.0";
       const std::vector<int> &qexpand = qexpand_;
       // clear all the temp statistics
       for (auto nid : qexpand) {

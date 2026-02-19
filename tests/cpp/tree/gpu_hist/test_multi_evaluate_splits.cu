@@ -22,10 +22,14 @@ class GpuMultiHistEvaluatorBasicTest : public ::testing::Test {
   MultiEvaluateSplitSharedInputs shared_inputs;
 
   dh::device_vector<bst_feature_t> feature_segments;
+  dh::device_vector<bst_feature_t> feature_set;
   dh::device_vector<float> feature_values{.0f, .1f, .2f, .3f};
   dh::device_vector<float> min_values{-1.0f};
 
   void SetUp() override {
+    input.nidx = 0;
+    input.depth = 0;
+
     parent_sum.resize(n_targets);
     parent_sum[0] = GradientPairInt64{56, 40};
     parent_sum[1] = GradientPairInt64{96, 128};
@@ -33,14 +37,14 @@ class GpuMultiHistEvaluatorBasicTest : public ::testing::Test {
     histogram.resize(n_bins_per_feat_tar * n_targets);
     // first target, dense,                    // 0/0, 56/40
     histogram[0] = GradientPairInt64{8, 4};    // 8/4, 48/36
-    histogram[2] = GradientPairInt64{12, 8};   // 20/12, 36/28
-    histogram[4] = GradientPairInt64{16, 12};  // 36/24, 20/16
-    histogram[6] = GradientPairInt64{20, 16};  // 56/40, 0/0
+    histogram[1] = GradientPairInt64{12, 8};   // 20/12, 36/28
+    histogram[2] = GradientPairInt64{16, 12};  // 36/24, 20/16
+    histogram[3] = GradientPairInt64{20, 16};  // 56/40, 0/0
 
     // second target, dense                    // 0/0,  96/128
-    histogram[1] = GradientPairInt64{11, 13};  // 11/13, 85/115
-    histogram[3] = GradientPairInt64{19, 29};  // 30/42, 66/86
-    histogram[5] = GradientPairInt64{27, 45};  // 57/87, 39/41
+    histogram[4] = GradientPairInt64{11, 13};  // 11/13, 85/115
+    histogram[5] = GradientPairInt64{19, 29};  // 30/42, 66/86
+    histogram[6] = GradientPairInt64{27, 45};  // 57/87, 39/41
     histogram[7] = GradientPairInt64{39, 41};  // 96/128, 0/0
 
     input.parent_sum = dh::ToSpan(parent_sum);
@@ -55,11 +59,15 @@ class GpuMultiHistEvaluatorBasicTest : public ::testing::Test {
     feature_segments[1] = static_cast<bst_feature_t>(n_bins_per_feat_tar);
     shared_inputs.feature_segments = dh::ToSpan(feature_segments);
 
-    shared_inputs.feature_values = dh::ToSpan(feature_values);
+    feature_set.resize(1, 0);
+    input.feature_set = dh::ToSpan(feature_set);
 
-    shared_inputs.min_values = dh::ToSpan(min_values);
+    shared_inputs.feature_values = dh::ToSpan(feature_values).data();
+    shared_inputs.min_values = dh::ToSpan(min_values).data();
 
     shared_inputs.n_bins_per_feat_tar = n_bins_per_feat_tar;
+    shared_inputs.max_active_feature = 1;
+
     TrainParam param;
     param.Init(Args{{"min_child_weight", "0"}, {"reg_lambda", "0"}, {"learning_rate", "1"}});
     shared_inputs.param = GPUTrainingParam{param};
@@ -76,10 +84,6 @@ class GpuMultiHistEvaluatorBasicTest : public ::testing::Test {
     TrainParam param;
     param.Init(Args{});
     ASSERT_FALSE(candidate.IsValid(param, 100));
-    ASSERT_TRUE(candidate.base_weight.empty());
-    ASSERT_TRUE(candidate.left_weight.empty());
-    ASSERT_TRUE(candidate.right_weight.empty());
-    ASSERT_TRUE(candidate.split.child_sum.empty());
   }
 };
 

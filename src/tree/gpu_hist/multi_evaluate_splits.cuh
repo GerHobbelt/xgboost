@@ -1,21 +1,47 @@
 /**
- * Copyright 2025, XGBoost contributors
+ * Copyright 2025-2026, XGBoost contributors
  */
 #pragma once
 
 #include "../../common/device_vector.cuh"  // for device_vector
 #include "evaluate_splits.cuh"             // for MultiEvaluateSplitSharedInputs
-#include "quantiser.cuh"                   // for GradientQuantiser
 #include "xgboost/base.h"                  // for GradientPairInt64
 #include "xgboost/context.h"               // for Context
 
 namespace xgboost::tree::cuda_impl {
 /** @brief Evaluator for vector leaf. */
 class MultiHistEvaluator {
+ public:
+  struct WeightBuffer {
+    // * 3 because of base, left, right weights.
+    constexpr static bst_node_t kNodes = 3;
+
+    common::Span<float> weights;
+    bst_target_t n_targets;
+
+    static WeightBuffer Make(bst_node_t n_nodes, bst_target_t n_targets,
+                             dh::DeviceUVector<float> *p_weights) {
+      p_weights->resize(n_nodes * n_targets * kNodes);
+      WeightBuffer buf{dh::ToSpan(*p_weights), n_targets};
+      return buf;
+    }
+    // get the base weight buffer
+    XGBOOST_DEVICE common::Span<float> Base(std::size_t nidx_in_set) const {
+      return weights.subspan(nidx_in_set * n_targets * kNodes, n_targets);
+    }
+    XGBOOST_DEVICE common::Span<float> Left(std::size_t nidx_in_set) const {
+      return weights.subspan(nidx_in_set * n_targets * kNodes + n_targets, n_targets);
+    }
+    XGBOOST_DEVICE common::Span<float> Right(std::size_t nidx_in_set) const {
+      return weights.subspan(nidx_in_set * n_targets * kNodes + n_targets * 2, n_targets);
+    }
+  };
+
+ private:
   // Buffer for node weights
-  dh::device_vector<float> weights_;
+  dh::DeviceUVector<float> weights_;
   // Buffer for histogram scans.
-  dh::device_vector<GradientPairInt64> scan_buffer_;
+  dh::DeviceUVector<GradientPairInt64> scan_buffer_;
   // Buffer for node gradient sums.
   dh::device_vector<GradientPairInt64> node_sums_;
 
@@ -59,8 +85,4 @@ class MultiHistEvaluator {
   void ApplyTreeSplit(Context const *ctx, RegTree const *p_tree,
                       common::Span<MultiExpandEntry const> d_candidates, bst_target_t n_targets);
 };
-
-std::ostream &DebugPrintHistogram(std::ostream &os, common::Span<GradientPairInt64 const> node_hist,
-                                  common::Span<GradientQuantiser const> roundings,
-                                  bst_target_t n_targets);
 }  // namespace xgboost::tree::cuda_impl

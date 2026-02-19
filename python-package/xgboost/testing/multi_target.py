@@ -20,8 +20,8 @@ from ..objective import Objective, TreeObjective
 from ..sklearn import XGBClassifier
 from ..training import train
 from .data import IteratorForTest
-from .updater import ResetStrategy
-from .utils import Device, assert_allclose
+from .updater import ResetStrategy, train_result
+from .utils import Device, assert_allclose, non_increasing
 
 
 def run_multiclass(device: Device, learning_rate: Optional[float]) -> None:
@@ -39,7 +39,7 @@ def run_multiclass(device: Device, learning_rate: Optional[float]) -> None:
     )
     clf.fit(X, y, eval_set=[(X, y)])
     assert clf.objective == "multi:softprob"
-    assert tm.non_increasing(clf.evals_result()["validation_0"]["mlogloss"])
+    assert non_increasing(clf.evals_result()["validation_0"]["mlogloss"])
     if learning_rate is not None and abs(learning_rate - 1.0) < 1e-5:
         assert clf.evals_result()["validation_0"]["mlogloss"][-1] < 0.045
 
@@ -60,7 +60,7 @@ def run_multilabel(device: Device, learning_rate: Optional[float]) -> None:
     )
     clf.fit(X, y, eval_set=[(X, y)])
     assert clf.objective == "binary:logistic"
-    assert tm.non_increasing(clf.evals_result()["validation_0"]["logloss"])
+    assert non_increasing(clf.evals_result()["validation_0"]["logloss"])
     if learning_rate is not None and abs(learning_rate - 1.0) < 1e-5:
         assert clf.evals_result()["validation_0"]["logloss"][-1] < 0.065
 
@@ -68,11 +68,77 @@ def run_multilabel(device: Device, learning_rate: Optional[float]) -> None:
     assert proba.shape == y.shape
 
 
+def run_quantile_loss(device: Device, weighted: bool) -> None:
+    """Check quantile regression for vector leaf."""
+    params = {
+        "objective": "reg:quantileerror",
+        "device": device,
+        "quantile_alpha": [0.45, 0.5, 0.55],
+        "multi_strategy": "multi_output_tree",
+    }
+    n_samples = 2048
+    X, y = make_regression(n_samples=n_samples, n_features=16, random_state=2026)
+
+    def no_crossing_first_tree(weight: Optional[np.ndarray]) -> None:
+        """The first tree should not generate quantile crossing given sufficient amount
+        of samples for quantile interpolation.
+
+        """
+        Xy = QuantileDMatrix(X, y, weight=weight)
+        booster = train(params, Xy, evals=[(Xy, "Train")], num_boost_round=1)
+        y_predt = booster.predict(Xy)
+        assert y_predt.shape == (n_samples, 3)
+        assert (y_predt[:, 0] <= y_predt[:, 1]).all()
+        assert (y_predt[:, 1] <= y_predt[:, 2]).all()
+
+    if not weighted:
+        weight = None
+    else:
+        # Test with weights.
+        rng = np.random.default_rng(2026)
+        weight = rng.uniform(0.0, 1.0, size=n_samples)
+
+    no_crossing_first_tree(weight)
+
+    Xy = QuantileDMatrix(X, y, weight=weight)
+    evals_result = train_result(params, Xy, num_rounds=10)
+    assert non_increasing(evals_result["train"]["quantile"])
+
+
+def run_absolute_error(device: Device) -> None:
+    """Test mean absolute error with vector leaf."""
+    params = {
+        "objective": "reg:absoluteerror",
+        "device": device,
+        "multi_strategy": "multi_output_tree",
+    }
+    n_samples = 1024
+    X, y = make_regression(
+        n_samples=n_samples, n_features=16, n_targets=3, random_state=2026
+    )
+    Xy = QuantileDMatrix(X, y)
+    evals_result: Dict[str, Dict] = {}
+    booster = train(
+        params,
+        Xy,
+        evals=[(Xy, "Train")],
+        verbose_eval=False,
+        evals_result=evals_result,
+        num_boost_round=16,
+    )
+    predt = booster.predict(Xy)
+    # make sure different targets are used
+    assert np.abs((predt[:, 2] - predt[:, 1]).sum()) > 1000
+    assert np.abs((predt[:, 1] - predt[:, 0]).sum()) > 1000
+    assert non_increasing(evals_result["Train"]["mae"])
+    assert evals_result["Train"]["mae"][-1] < 30.0
+
+
 class LsObj0(TreeObjective):
     """Split grad is the same as value grad."""
 
     def __call__(
-        self, y_pred: ArrayLike, dtrain: DMatrix
+        self, iteration: int, y_pred: ArrayLike, dtrain: DMatrix
     ) -> Tuple[ArrayLike, ArrayLike]:
         cp = import_cupy()
 
@@ -81,7 +147,7 @@ class LsObj0(TreeObjective):
         return cp.array(grad), cp.array(hess)
 
     def split_grad(
-        self, grad: ArrayLike, hess: ArrayLike
+        self, iteration: int, grad: ArrayLike, hess: ArrayLike
     ) -> Tuple[ArrayLike, ArrayLike]:
         cp = import_cupy()
 
@@ -92,7 +158,7 @@ class LsObj1(Objective):
     """No split grad."""
 
     def __call__(
-        self, y_pred: ArrayLike, dtrain: DMatrix
+        self, iteration: int, y_pred: ArrayLike, dtrain: DMatrix
     ) -> Tuple[ArrayLike, ArrayLike]:
         cp = import_cupy()
 
@@ -128,7 +194,7 @@ def run_reduced_grad(device: Device) -> None:
             num_boost_round=8,
             evals_result=evals_result,
         )
-        assert tm.non_increasing(evals_result["Train"]["rmse"])
+        assert non_increasing(evals_result["Train"]["rmse"])
         return booster
 
     booster_0 = run_test(LsObj0())
@@ -151,7 +217,7 @@ def run_reduced_grad(device: Device) -> None:
             self._chk = check_used
 
         def split_grad(
-            self, grad: ArrayLike, hess: ArrayLike
+            self, iteration: int, grad: ArrayLike, hess: ArrayLike
         ) -> Tuple[cp.ndarray, cp.ndarray]:
             if self._chk:
                 assert False
@@ -217,7 +283,7 @@ def run_with_iter(device: Device) -> None:  # pylint: disable=too-many-locals
     np.testing.assert_allclose(
         evals_result_0["Train"]["rmse"], evals_result_1["Train"]["rmse"]
     )
-    assert tm.non_increasing(evals_result_0["Train"]["rmse"])
+    assert non_increasing(evals_result_0["Train"]["rmse"])
     X, _, _ = it.as_arrays()
     assert_allclose(device, booster_0.inplace_predict(X), booster_1.inplace_predict(X))
 
@@ -278,3 +344,52 @@ def run_eta(device: Device) -> None:
 
     run(None)
     run(LsObj0())
+
+
+def run_deterministic(device: Device) -> None:
+    """Check the vector leaf implementation is deterministic."""
+    X, y = make_regression(
+        n_samples=int(2**16), n_features=64, random_state=1994, n_targets=5
+    )
+
+    def run() -> Booster:
+        Xy = QuantileDMatrix(X, y)
+        params = {
+            "device": device,
+            "multi_strategy": "multi_output_tree",
+            "debug_synchronize": True,
+        }
+        return train(params, Xy, num_boost_round=16)
+
+    booster_0 = run()
+    booster_1 = run()
+    raw_0 = booster_0.save_raw()
+    raw_1 = booster_1.save_raw()
+    assert raw_0 == raw_1
+
+
+def run_column_sampling(device: Device) -> None:
+    """Test with column sampling."""
+    n_features = 32
+    X, y = make_regression(
+        n_samples=1024, n_features=n_features, random_state=1994, n_targets=3
+    )
+    # First half is valid, second half is 0.
+    feature_weights = np.zeros(shape=(n_features, 1), dtype=np.float32)
+    feature_weights[: n_features // 2] = 1.0 / (n_features / 2)
+    Xy = QuantileDMatrix(X, y, feature_weights=feature_weights)
+
+    params = {
+        "device": device,
+        "multi_strategy": "multi_output_tree",
+        "debug_synchronize": True,
+        "colsample_bynode": 0.4,
+    }
+    booster = train(params, Xy, num_boost_round=16)
+    fscores = booster.get_fscore()
+    # sampled
+    for f in range(0, n_features // 2):
+        assert f"f{f}" in fscores
+    # not sampled
+    for f in range(n_features // 2, n_features):
+        assert f"f{f}" not in fscores
