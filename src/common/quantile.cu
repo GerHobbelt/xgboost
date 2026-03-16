@@ -29,7 +29,7 @@
 #include "xgboost/span.h"
 
 namespace xgboost::common {
-using WQSketch = HostSketchContainer::WQSketch;
+using WQSketch = WQuantileSketch;
 using SketchEntry = WQSketch::Entry;
 
 // Algorithm 4 in XGBoost's paper, using binary search to find i.
@@ -505,18 +505,14 @@ void SketchContainer::AllReduce(Context const *ctx, bool is_column_split) {
   }
 
   timer_.Start(__func__);
-  // Reduce the overhead on syncing.
-  bst_idx_t global_sum_rows = num_rows_;
-  auto rc = collective::Allreduce(ctx, linalg::MakeVec(&global_sum_rows, 1), collective::Op::kSum);
-  SafeColl(rc);
-  bst_idx_t intermediate_num_cuts =
-      std::min(global_sum_rows, static_cast<size_t>(num_bins_ * kFactor));
+  // Bound local sketch size before exchanging data across workers.
+  auto intermediate_num_cuts = static_cast<bst_idx_t>(num_bins_ * kFactor);
   this->Prune(ctx, intermediate_num_cuts);
 
   auto d_columns_ptr = this->columns_ptr_.ConstDeviceSpan();
   CHECK_EQ(d_columns_ptr.size(), num_columns_ + 1);
   size_t n = d_columns_ptr.size();
-  rc = collective::Allreduce(ctx, linalg::MakeVec(&n, 1), collective::Op::kMax);
+  auto rc = collective::Allreduce(ctx, linalg::MakeVec(&n, 1), collective::Op::kMax);
   SafeColl(rc);
   CHECK_EQ(n, d_columns_ptr.size()) << "Number of columns differs across workers";
 
@@ -560,8 +556,7 @@ void SketchContainer::AllReduce(Context const *ctx, bool is_column_split) {
   timer_.Stop(__func__);
 
   // Merge them into a new sketch.
-  SketchContainer new_sketch(this->feature_types_, num_bins_, this->num_columns_, global_sum_rows,
-                             ctx->Device());
+  SketchContainer new_sketch(this->feature_types_, num_bins_, this->num_columns_, ctx->Device());
   for (size_t i = 0; i < allworkers.size(); ++i) {
     auto worker = allworkers[i];
     auto worker_ptr =
@@ -586,9 +581,10 @@ struct InvalidCatOp {
 };
 }  // anonymous namespace
 
-void SketchContainer::MakeCuts(Context const *ctx, HistogramCuts *p_cuts, bool is_column_split) {
+HistogramCuts SketchContainer::MakeCuts(Context const *ctx, bool is_column_split) {
   curt::SetDevice(ctx->Ordinal());
-  p_cuts->min_vals_.Resize(num_columns_);
+  HistogramCuts cuts{num_columns_};
+  auto *p_cuts = &cuts;
 
   // Sync between workers.
   this->AllReduce(ctx, is_column_split);
@@ -601,15 +597,12 @@ void SketchContainer::MakeCuts(Context const *ctx, HistogramCuts *p_cuts, bool i
   // Set up inputs
   auto d_in_columns_ptr = this->columns_ptr_.ConstDeviceSpan();
 
-  p_cuts->min_vals_.SetDevice(ctx->Device());
-  auto d_min_values = p_cuts->min_vals_.DeviceSpan();
   auto const in_cut_values = dh::ToSpan(this->Current());
 
   // Set up output ptr
   p_cuts->cut_ptrs_.SetDevice(ctx->Device());
   auto &h_out_columns_ptr = p_cuts->cut_ptrs_.HostVector();
-  h_out_columns_ptr.clear();
-  h_out_columns_ptr.push_back(0);
+  h_out_columns_ptr.front() = 0;
   auto const &h_feature_types = this->feature_types_.ConstHostSpan();
 
   auto d_ft = feature_types_.ConstDeviceSpan();
@@ -674,10 +667,10 @@ void SketchContainer::MakeCuts(Context const *ctx, HistogramCuts *p_cuts, bool i
     if (IsCat(h_feature_types, i)) {
       // column_size is the number of unique values in that feature.
       CheckMaxCat(max_values[i].value, column_size);
-      h_out_columns_ptr.push_back(max_values[i].value + 1);  // includes both max_cat and 0.
+      h_out_columns_ptr[i + 1] = max_values[i].value + 1;  // includes both max_cat and 0.
     } else {
-      h_out_columns_ptr.push_back(
-          std::min(static_cast<size_t>(column_size), static_cast<size_t>(num_bins_)));
+      h_out_columns_ptr[i + 1] =
+          std::min(static_cast<size_t>(column_size), static_cast<size_t>(num_bins_));
     }
   }
   std::partial_sum(h_out_columns_ptr.begin(), h_out_columns_ptr.end(), h_out_columns_ptr.begin());
@@ -701,16 +694,10 @@ void SketchContainer::MakeCuts(Context const *ctx, HistogramCuts *p_cuts, bool i
       // column is empty, trees cannot split on it.  This is just to be consistent with
       // rest of the library.
       if (idx == 0) {
-        d_min_values[column_id] = kRtEps;
         out_column[0] = kRtEps;
         assert(out_column.size() == 1);
       }
       return;
-    }
-
-    if (idx == 0 && !IsCat(d_ft, column_id)) {
-      auto mval = in_column[idx].value;
-      d_min_values[column_id] = mval - (fabs(mval) + 1e-5);
     }
 
     if (IsCat(d_ft, column_id)) {
@@ -732,5 +719,6 @@ void SketchContainer::MakeCuts(Context const *ctx, HistogramCuts *p_cuts, bool i
 
   p_cuts->SetCategorical(this->has_categorical_, max_cat);
   timer_.Stop(__func__);
+  return cuts;
 }
 }  // namespace xgboost::common

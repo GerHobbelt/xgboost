@@ -1,9 +1,10 @@
-"""Copyright 2019-2024, XGBoost contributors"""
+"""Copyright 2019-2026, XGBoost contributors"""
 
 import asyncio
 import json
 from collections import OrderedDict
 from inspect import signature
+from pathlib import Path
 from typing import Any, Dict, List, Type, TypeVar
 
 import numpy as np
@@ -298,10 +299,8 @@ class TestDistributedGPU:
         X, y = make_categorical(client, 1, 30, 13)
         X_valid, y_valid = make_categorical(client, 10000, 30, 13)
 
-        Xy = dxgb.DaskQuantileDMatrix(client, X, y, enable_categorical=True)
-        Xy_valid = dxgb.DaskQuantileDMatrix(
-            client, X_valid, y_valid, ref=Xy, enable_categorical=True
-        )
+        Xy = dxgb.DaskQuantileDMatrix(client, X, y)
+        Xy_valid = dxgb.DaskQuantileDMatrix(client, X_valid, y_valid, ref=Xy)
         # The error is from a worker. Dask cannot prioritize which worker's error to
         # propagate, it could be the emtpy DMatrix error or the collective communication
         # error. As a result, the test doesn't match the error message.
@@ -581,13 +580,13 @@ class TestDistributedGPU:
 
 
 @pytest.mark.skipif(**tm.no_dask_cudf())
-def test_categorical(local_cuda_client: Client) -> None:
+def test_categorical(tmp_path: Path, local_cuda_client: Client) -> None:
     X, y = make_categorical(local_cuda_client, 10000, 30, 13)
     X = X.to_backend("cudf")
 
     X_onehot, _ = make_categorical(local_cuda_client, 10000, 30, 13, onehot=True)
     X_onehot = X_onehot.to_backend("cudf")
-    run_categorical(local_cuda_client, "hist", "cuda", X, X_onehot, y)
+    run_categorical(local_cuda_client, "hist", "cuda", X, X_onehot, y, tmp_path)
 
 
 @pytest.mark.skipif(**tm.no_dask_cudf())
@@ -702,13 +701,3 @@ async def run_from_dask_array_asyncio(scheduler_address: str) -> dxgb.TrainRetur
 
         client.shutdown()
         return output
-
-
-def test_invalid_quantile_blocks(local_cuda_client: Client) -> None:
-    X, y, _ = generate_array()
-    client = local_cuda_client
-    X = X.to_backend("cupy")
-    y = y.to_backend("cupy")
-    with pytest.raises(ValueError, match="must be greater than 0."):
-        Xy = dxgb.DaskQuantileDMatrix(client, X, y, max_quantile_batches=0)
-        dxgb.train(client, {"tree_method": "hist", "device": "cuda"}, dtrain=Xy)

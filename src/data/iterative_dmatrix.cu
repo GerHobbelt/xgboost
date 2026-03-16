@@ -15,7 +15,7 @@
 
 namespace xgboost::data {
 void IterativeDMatrix::InitFromCUDA(
-    Context const* ctx, BatchParam const& p, std::int64_t max_quantile_blocks,
+    Context const* ctx, BatchParam const& p,
     DataIterProxy<DataIterResetCallback, XGDMatrixCallbackNext>&& iter, float missing,
     std::shared_ptr<DMatrix> ref) {
   // A handle passed to external iterator.
@@ -35,10 +35,9 @@ void IterativeDMatrix::InitFromCUDA(
   /**
    * Generate quantiles
    */
-  auto cuts = std::make_shared<common::HistogramCuts>();
+  auto cuts = std::make_shared<common::HistogramCuts>(0);
   ExternalDataInfo ext_info;
-  cuda_impl::MakeSketches(ctx, &iter, proxy, ref, p, missing, cuts, this->info_,
-                          max_quantile_blocks, &ext_info);
+  cuda_impl::MakeSketches(ctx, &iter, proxy, ref, p, missing, cuts, this->info_, &ext_info);
   ext_info.SetInfo(ctx, true, &this->info_);
 
   auto init_page = [this, &cuts, &ext_info]() {

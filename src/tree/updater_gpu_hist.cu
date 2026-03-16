@@ -23,7 +23,7 @@
 #include "../common/device_helpers.cuh"
 #include "../common/device_vector.cuh"  // for device_vector
 #include "../common/hist_util.h"        // for HistogramCuts
-#include "../common/random.h"           // for ColumnSampler, GlobalRandom
+#include "../common/random.h"           // for ColumnSampler
 #include "../common/timer.h"
 #include "../data/batch_utils.h"     // for StaticBatch
 #include "../data/ellpack_page.cuh"  // for EllpackPageImpl
@@ -130,7 +130,7 @@ struct GPUHistMakerDevice {
 
   TrainParam const param;
 
-  std::unique_ptr<GradientQuantiser> quantiser;
+  std::unique_ptr<GradientQuantiserGroup> quantiser;
 
   dh::PinnedMemory pinned;
   dh::PinnedMemory pinned2;
@@ -175,18 +175,17 @@ struct GPUHistMakerDevice {
 
     auto const& info = p_fmat->Info();
 
-    this->quantiser = std::make_unique<GradientQuantiser>(
+    this->quantiser = std::make_unique<GradientQuantiserGroup>(
         ctx_, linalg::MakeVec(this->ctx_->Device(), dh_gpair->ConstDeviceSpan()), p_fmat->Info());
     auto gpair =
         linalg::MakeTensorView(this->ctx_, dh_gpair->ConstDeviceSpan(), dh_gpair->Size(), 1);
-    dh::caching_device_vector<GradientQuantiser> dq{*this->quantiser};
-    CalcQuantizedGpairs(this->ctx_, gpair, dh::ToSpan(dq), &this->d_gpair);
+    CalcQuantizedGpairs(this->ctx_, gpair, this->quantiser->DeviceSpan(), &this->d_gpair);
 
     /**
      * Sampling
      */
     auto gpairs = this->d_gpair.View(this->ctx_->Device());
-    this->sampler->Sample(ctx_, gpairs, dh::ToSpan(dq));
+    this->sampler->Sample(ctx_, gpairs, this->quantiser->DeviceSpan());
     p_fmat->Info().feature_types.SetDevice(ctx_->Device());
 
     /**
@@ -221,11 +220,10 @@ struct GPUHistMakerDevice {
         interaction_constraints.Query(sampled_features->ConstDeviceSpan(), nidx);
     EvaluateSplitInputs inputs{nidx, 0, root_sum, feature_set, histogram_.GetNodeHistogram(nidx)};
     EvaluateSplitSharedInputs shared_inputs{gpu_param,
-                                            *quantiser,
+                                            (*quantiser)[0],
                                             p_fmat->Info().feature_types.ConstDeviceSpan(),
                                             cuts_->cut_ptrs_.ConstDeviceSpan(),
                                             cuts_->cut_values_.ConstDeviceSpan(),
-                                            cuts_->min_vals_.ConstDeviceSpan(),
                                             p_fmat->IsDense() && !collective::IsDistributed()};
     auto split = this->evaluator_.EvaluateSingleSplit(ctx_, inputs, shared_inputs);
     return split;
@@ -242,9 +240,8 @@ struct GPUHistMakerDevice {
     std::vector<bst_node_t> nidx(2 * candidates.size());
     auto h_node_inputs = pinned2.GetSpan<EvaluateSplitInputs>(2 * candidates.size());
     EvaluateSplitSharedInputs shared_inputs{
-        GPUTrainingParam{param}, *quantiser, p_fmat->Info().feature_types.ConstDeviceSpan(),
+        GPUTrainingParam{param}, (*quantiser)[0], p_fmat->Info().feature_types.ConstDeviceSpan(),
         cuts_->cut_ptrs_.ConstDeviceSpan(), cuts_->cut_values_.ConstDeviceSpan(),
-        cuts_->min_vals_.ConstDeviceSpan(),
         // is_dense represents the local data
         p_fmat->IsDense() && !collective::IsDistributed()};
     dh::TemporaryArray<GPUExpandEntry> entries(2 * candidates.size());
@@ -462,8 +459,9 @@ struct GPUHistMakerDevice {
     auto const& tree = p_tree->HostScView();
     cuda_impl::AssignNodes(tree, candidates, build_nidx, subtraction_nidx,
                            [&](GPUExpandEntry const& e) {
-                             auto left_sum = this->quantiser->ToFloatingPoint(e.split.left_sum);
-                             auto right_sum = this->quantiser->ToFloatingPoint(e.split.right_sum);
+                             auto const& q = (*this->quantiser)[0];
+                             auto left_sum = q.ToFloatingPoint(e.split.left_sum);
+                             auto right_sum = q.ToFloatingPoint(e.split.right_sum);
                              bool fewer_right = right_sum.GetHess() < left_sum.GetHess();
                              return fewer_right;
                            });
@@ -621,10 +619,11 @@ struct GPUHistMakerDevice {
     auto base_weight = candidate.base_weight;
     auto left_weight = candidate.left_weight * param.learning_rate;
     auto right_weight = candidate.right_weight * param.learning_rate;
+    auto const& q = (*quantiser)[0];
     auto parent_hess =
-        quantiser->ToFloatingPoint(candidate.split.left_sum + candidate.split.right_sum).GetHess();
-    auto left_hess = quantiser->ToFloatingPoint(candidate.split.left_sum).GetHess();
-    auto right_hess = quantiser->ToFloatingPoint(candidate.split.right_sum).GetHess();
+        q.ToFloatingPoint(candidate.split.left_sum + candidate.split.right_sum).GetHess();
+    auto left_hess = q.ToFloatingPoint(candidate.split.left_sum).GetHess();
+    auto right_hess = q.ToFloatingPoint(candidate.split.right_sum).GetHess();
 
     auto is_cat = candidate.split.is_cat;
     if (is_cat) {
@@ -678,7 +677,7 @@ struct GPUHistMakerDevice {
     this->histogram_.AllReduceHist(ctx_, p_fmat->Info(), kRootNIdx, 1);
 
     // Remember root stats
-    auto root_sum = this->quantiser->ToFloatingPoint(root_sum_quantised);
+    auto root_sum = (*this->quantiser)[0].ToFloatingPoint(root_sum_quantised);
     p_tree->Stat(kRootNIdx).sum_hess = root_sum.GetHess();
     auto weight = CalcWeight(param, root_sum);
     p_tree->Stat(kRootNIdx).base_weight = weight;

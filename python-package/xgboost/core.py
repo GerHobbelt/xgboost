@@ -674,7 +674,7 @@ class DMatrix:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         label_lower_bound: Optional[ArrayLike] = None,
         label_upper_bound: Optional[ArrayLike] = None,
         feature_weights: Optional[ArrayLike] = None,
-        enable_categorical: bool = False,
+        enable_categorical: bool = True,
         data_split_mode: DataSplitMode = DataSplitMode.ROW,
     ) -> None:
         """Parameters
@@ -1465,19 +1465,12 @@ class QuantileDMatrix(DMatrix, _RefMixIn):
         applied to the validation/test data
 
     max_quantile_batches :
-        For GPU-based inputs from an iterator, XGBoost handles incoming batches with
-        multiple growing sub-streams. This parameter sets the maximum number of batches
-        before XGBoost can cut a sub-stream and create a new one. This can help bound
-        the memory usage. By default, XGBoost grows a sub-stream exponentially until
-        batches are exhausted. This option is only used for the training dataset and the
-        default is None (unbounded). Lastly, if the `data` is a single batch instead of
-        an iterator, this parameter has no effect.
+        Deprecated. This parameter no longer has any effect and will be removed in a
+        future release.
 
         .. versionadded:: 3.0.0
 
-        .. warning::
-
-            This is an experimental parameter and subject to change.
+        .. deprecated:: 3.3.0
 
     """
 
@@ -1501,7 +1494,7 @@ class QuantileDMatrix(DMatrix, _RefMixIn):
         label_lower_bound: Optional[ArrayLike] = None,
         label_upper_bound: Optional[ArrayLike] = None,
         feature_weights: Optional[ArrayLike] = None,
-        enable_categorical: bool = False,
+        enable_categorical: bool = True,
         max_quantile_batches: Optional[int] = None,
         data_split_mode: DataSplitMode = DataSplitMode.ROW,
     ) -> None:
@@ -1631,7 +1624,7 @@ class ExtMemQuantileDMatrix(DMatrix, _RefMixIn):
         nthread: Optional[int] = None,
         max_bin: Optional[int] = None,
         ref: Optional[DMatrix] = None,
-        enable_categorical: bool = False,
+        enable_categorical: bool = True,
         max_quantile_batches: Optional[int] = None,
         cache_host_ratio: Optional[float] = None,
     ) -> None:
@@ -1642,7 +1635,7 @@ class ExtMemQuantileDMatrix(DMatrix, _RefMixIn):
             A user-defined :py:class:`DataIter` for loading data.
 
         max_quantile_batches :
-            See :py:class:`QuantileDMatrix`.
+            Deprecated. See :py:class:`QuantileDMatrix`.
 
         cache_host_ratio :
 
@@ -2423,7 +2416,7 @@ class Booster:
         strict_shape: bool = False,
     ) -> np.ndarray:
         """Predict with data.  The full model will be used unless `iteration_range` is
-        specified, meaning user have to either slice the model or use the
+        specified, meaning users have to either slice the model or use the
         ``best_iteration`` attribute to get prediction from best model returned from
         early stopping.
 

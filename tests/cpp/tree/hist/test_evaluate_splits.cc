@@ -32,8 +32,8 @@ void TestPartitionBasedSplit::SetUp() {
   std::iota(sorted_idx_.begin(), sorted_idx_.end(), 0);
 
   info_.num_col_ = 1;
+  cuts_ = common::HistogramCuts{1};
 
-  cuts_.cut_ptrs_.Resize(2);
   cuts_.SetCategorical(true, n_bins_);
   auto &h_cuts = cuts_.cut_ptrs_.HostVector();
   h_cuts[0] = 0;
@@ -41,8 +41,6 @@ void TestPartitionBasedSplit::SetUp() {
   auto &h_vals = cuts_.cut_values_.HostVector();
   h_vals.resize(n_bins_);
   std::iota(h_vals.begin(), h_vals.end(), 0.0);
-
-  cuts_.min_vals_.Resize(1);
 
   Context ctx;
   HistMakerTrainParam hist_param;
@@ -97,7 +95,7 @@ void TestPartitionBasedSplit::SetUp() {
 void TestEvaluateSplits(bool force_read_by_column) {
   Context ctx;
   ctx.nthread = 4;
-  int static constexpr kRows = 8, kCols = 16;
+  static constexpr bst_idx_t kRows = 8, kCols = 16;
   auto sampler = std::make_shared<common::ColumnSampler>(1u);
 
   TrainParam param;
@@ -107,9 +105,9 @@ void TestEvaluateSplits(bool force_read_by_column) {
 
   auto evaluator = HistEvaluator{&ctx, &param, dmat->Info(), sampler};
   BoundedHistCollection hist;
-  std::vector<GradientPair> row_gpairs = {
-      {1.23f, 0.24f}, {0.24f, 0.25f}, {0.26f, 0.27f},  {2.27f, 0.28f},
-      {0.27f, 0.29f}, {0.37f, 0.39f}, {-0.47f, 0.49f}, {0.57f, 0.59f}};
+  std::vector<GradientPair> row_gpairs = {{1.23f, 0.24f},  {0.24f, 0.25f}, {0.26f, 0.27f},
+                                          {2.27f, 0.28f},  {0.27f, 0.29f}, {0.37f, 0.39f},
+                                          {-0.47f, 0.49f}, {0.57f, 0.59f}};
 
   size_t constexpr kMaxBins = 4;
   // dense, no missing values
@@ -141,21 +139,19 @@ void TestEvaluateSplits(bool force_read_by_column) {
   evaluator.InitRoot(GradStats{total_gpair});
   evaluator.EvaluateSplits(hist, gmat.cut, {}, tree, &entries);
 
-  auto best_loss_chg =
-      evaluator.Evaluator().CalcSplitGain(
-          param, 0, entries.front().split.SplitIndex(),
-          entries.front().split.left_sum, entries.front().split.right_sum) -
-      evaluator.Stats().front().root_gain;
+  auto best_loss_chg = evaluator.Evaluator().CalcSplitGain(
+                           param, 0, entries.front().split.SplitIndex(),
+                           entries.front().split.left_sum, entries.front().split.right_sum) -
+                       evaluator.Stats().front().root_gain;
   ASSERT_EQ(entries.front().split.loss_chg, best_loss_chg);
   ASSERT_GT(entries.front().split.loss_chg, 16.2f);
 
   // Assert that's the best split
   for (size_t i = 1; i < gmat.cut.Ptrs().size(); ++i) {
     GradStats left, right;
-    for (size_t j = gmat.cut.Ptrs()[i-1]; j < gmat.cut.Ptrs()[i]; ++j) {
-      auto loss_chg =
-          evaluator.Evaluator().CalcSplitGain(param, 0, i - 1, left, right) -
-          evaluator.Stats().front().root_gain;
+    for (size_t j = gmat.cut.Ptrs()[i - 1]; j < gmat.cut.Ptrs()[i]; ++j) {
+      auto loss_chg = evaluator.Evaluator().CalcSplitGain(param, 0, i - 1, left, right) -
+                      evaluator.Stats().front().root_gain;
       ASSERT_GE(best_loss_chg, loss_chg);
       left.Add(hist[0][j].GetGrad(), hist[0][j].GetHess());
       right.SetSubstract(GradStats{total_gpair}, left);
@@ -215,10 +211,9 @@ TEST(HistMultiEvaluator, Evaluate) {
   ASSERT_EQ(w(0), -1.5);
   ASSERT_EQ(w(1), -1.5);
 
-  common::HistogramCuts cuts;
+  common::HistogramCuts cuts{2};
   cuts.cut_ptrs_ = {0, 2, 4};
   cuts.cut_values_ = {0.5, 1.0, 2.0, 3.0};
-  cuts.min_vals_ = {-0.2, 1.8};
 
   std::vector<MultiExpandEntry> entries(1, {/*nidx=*/0, /*depth=*/0});
 
@@ -226,7 +221,7 @@ TEST(HistMultiEvaluator, Evaluate) {
   std::transform(histogram.cbegin(), histogram.cend(), std::back_inserter(ptrs),
                  [](auto const &h) { return std::addressof(h); });
 
-  evaluator.EvaluateSplits(tree, ptrs, cuts, &entries);
+  evaluator.EvaluateSplits(tree, ptrs, cuts, {}, &entries);
 
   ASSERT_EQ(entries.front().split.loss_chg, 12.5);
   ASSERT_EQ(entries.front().split.split_value, 0.5);
@@ -239,10 +234,10 @@ TEST(HistEvaluator, Apply) {
   Context ctx;
   ctx.nthread = 4;
   RegTree tree;
-  int static constexpr kNRows = 8, kNCols = 16;
+  static constexpr bst_idx_t kRows = 8, kCols = 16;
   TrainParam param;
   param.UpdateAllowUnknown(Args{{"min_child_weight", "0"}, {"reg_lambda", "0.0"}});
-  auto dmat = RandomDataGenerator(kNRows, kNCols, 0).Seed(3).GenerateDMatrix();
+  auto dmat = RandomDataGenerator(kRows, kCols, 0).Seed(3).GenerateDMatrix();
   auto sampler = std::make_shared<common::ColumnSampler>(1u);
   auto evaluator_ = HistEvaluator{&ctx, &param, dmat->Info(), sampler};
 
@@ -283,7 +278,7 @@ TEST_F(TestPartitionBasedSplit, CPUHist) {
 namespace {
 auto CompareOneHotAndPartition(bool onehot) {
   Context ctx;
-  int static constexpr kRows = 128, kCols = 1;
+  static constexpr bst_idx_t kRows = 128, kCols = 1;
   std::vector<FeatureType> ft(kCols, FeatureType::kCategorical);
 
   TrainParam param;
@@ -365,5 +360,81 @@ TEST_F(TestCategoricalSplitWithMissing, HistEvaluator) {
                     split.DefaultLeft(),
                     GradientPairPrecise{split.left_sum.GetGrad(), split.left_sum.GetHess()},
                     GradientPairPrecise{split.right_sum.GetGrad(), split.right_sum.GetHess()});
+}
+
+TEST(HistMultiEvaluator, CategoricalOneHot) {
+  Context ctx;
+  ctx.nthread = 1;
+
+  TrainParam param;
+  param.Init(Args{{"min_child_weight", "0"}, {"reg_lambda", "0"}, {"max_cat_to_onehot", "100"}});
+  auto sampler = std::make_shared<common::ColumnSampler>(1u);
+
+  bst_feature_t n_features = 1;
+  bst_target_t n_targets = 2;
+  bst_bin_t n_cats = 3;
+
+  MetaInfo info;
+  info.num_col_ = n_features;
+  info.feature_types = {FeatureType::kCategorical};
+
+  HistMultiEvaluator evaluator{&ctx, info, &param, sampler};
+  HistMakerTrainParam hist_param;
+
+  // Per-target histograms with n_cats bins each.
+  std::vector<BoundedHistCollection> histogram(n_targets);
+  linalg::Vector<GradientPairPrecise> root_sum({n_targets}, DeviceOrd::CPU());
+  std::vector<std::vector<GradientPairPrecise>> hist_data = {
+      {{1.0, 0.5}, {-0.5, 0.5}, {0.5, 0.5}},   // t-0
+      {{0.5, 0.5}, {1.0, 0.5}, {-0.5, 0.5}}};  // t-1
+
+  for (bst_target_t t = 0; t < n_targets; ++t) {
+    auto &hist = histogram[t];
+    hist.Reset(n_cats * n_features, hist_param.MaxCachedHistNodes(ctx.Device()));
+    hist.AllocateHistograms({0});
+    auto node_hist = hist[0];
+    for (bst_bin_t b = 0; b < n_cats; ++b) {
+      node_hist[b] = hist_data[t][b];
+      root_sum(t) += node_hist[b];
+    }
+  }
+
+  common::HistogramCuts cuts{n_features};
+  cuts.cut_ptrs_ = {0, 3};
+  cuts.cut_values_ = {0.0, 1.0, 2.0};
+  cuts.SetCategorical(true, 2.0);
+
+  RegTree tree{n_targets, n_features};
+  auto weight = evaluator.InitRoot(root_sum.HostView());
+  float root_sum_hess = 0.0f;
+  for (bst_target_t t = 0; t < n_targets; ++t) {
+    root_sum_hess += static_cast<float>(root_sum.HostView()(t).GetHess());
+  }
+  tree.SetRoot(weight.HostView(), root_sum_hess);
+
+  std::vector<MultiExpandEntry> entries(1, {0, 0});
+  std::vector<BoundedHistCollection const *> ptrs;
+  for (auto &h : histogram) {
+    ptrs.push_back(&h);
+  }
+
+  std::vector<FeatureType> ft{FeatureType::kCategorical};
+  evaluator.EvaluateSplits(tree, ptrs, cuts, ft, &entries);
+
+  auto const &split = entries.front().split;
+  ASSERT_TRUE(split.is_cat);
+  ASSERT_FALSE(split.cat_bits.empty());
+  ASSERT_GT(split.loss_chg, 0.0f);
+
+  common::KCatBitField cat_bits{split.cat_bits};
+  auto chosen_cat = static_cast<bst_cat_t>(split.split_value);
+  ASSERT_TRUE(cat_bits.Check(chosen_cat));
+
+  // Verify ApplyTreeSplit works with categorical split.
+  evaluator.ApplyTreeSplit(entries.front(), &tree);
+  ASSERT_TRUE(tree.HasCategoricalSplit());
+  auto mt_view = tree.HostMtView();
+  ASSERT_EQ(mt_view.SplitType(0), FeatureType::kCategorical);
+  ASSERT_FALSE(mt_view.NodeCats(0).empty());
 }
 }  // namespace xgboost::tree
