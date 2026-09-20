@@ -557,11 +557,10 @@ struct WQSummaryContainer : public WQSummary<> {
 /*! \brief Weighted quantile sketch algorithm using merge/prune. */
 class WQuantileSketch {
  public:
-  // Sketch epsilon is approximately `1 / (kFactor * max_bin)` once `max_bin` limits the budget.
-  // Our current cut-rank measurements suggest an empirical constant of about 2 for the final
-  // emitted cuts, so the observed normalized cut error is about `2 / kFactor`. With
-  // `kFactor = 8`, that is roughly `0.25` bins of rank mass, i.e. about a quarter-bin offset.
-  static float constexpr kFactor = 8.0;
+  // Safety factor used to oversample the internal sketch relative to the target rank
+  // resolution. User-facing epsilon remains the target rank guarantee; `kFactor`
+  // only affects how much summary storage we reserve to achieve it.
+  static float constexpr kFactor = 2.0;
 
  public:
   using Summary = WQSummary<>;
@@ -575,15 +574,18 @@ class WQuantileSketch {
     level_.clear();
   }
 
+  [[nodiscard]] size_t NumElements() const { return num_elements_; }
+
   static size_t LimitSizeLevel(size_t maxn, double eps) {
     if (maxn == 0) {
       // Empty columns can appear in distributed column-split settings.
       return 1;
     }
+    auto const internal_eps = eps / kFactor;
     size_t nlevel = 1;
     size_t limit_size = 1;
     while (true) {
-      limit_size = static_cast<size_t>(ceil(nlevel / eps)) + 1;
+      limit_size = static_cast<size_t>(ceil(nlevel / internal_eps)) + 1;
       limit_size = std::min(maxn, limit_size);
       size_t n = (1ULL << nlevel);
       if (n * limit_size >= maxn) break;
@@ -592,7 +594,8 @@ class WQuantileSketch {
     // check invariant
     size_t n = (1ULL << nlevel);
     CHECK(n * limit_size >= maxn) << "invalid init parameter";
-    CHECK(nlevel <= std::max(static_cast<size_t>(1), static_cast<size_t>(limit_size * eps)))
+    CHECK(nlevel <=
+          std::max(static_cast<size_t>(1), static_cast<size_t>(limit_size * internal_eps)))
         << "invalid init parameter";
     return limit_size;
   }
@@ -604,6 +607,7 @@ class WQuantileSketch {
    */
   void Push(bst_float x, bst_float w = 1) {
     if (w == static_cast<bst_float>(0)) return;
+    ++num_elements_;
     if (!inqueue_.Push(x, w)) {
       inqueue_.PopSummary(&temp_);
       this->PushSummary(&temp_);
@@ -621,6 +625,14 @@ class WQuantileSketch {
   void PushSorted(common::Span<::xgboost::Entry const> column, std::vector<float> const &weights,
                   size_t num_retained_items) {
     CHECK_GE(num_retained_items, 1);
+    if (weights.empty()) {
+      num_elements_ += column.size();
+    } else {
+      num_elements_ +=
+          std::count_if(column.cbegin(), column.cend(), [&](::xgboost::Entry const &entry) {
+            return weights[entry.index] != static_cast<float>(0);
+          });
+    }
     auto const max_size = num_retained_items;
     this->temp_.Reserve(max_size + 1);
     this->temp_.SetPruneSorted(column, weights, max_size);
@@ -715,19 +727,21 @@ class WQuantileSketch {
   WQSummaryContainer temp_;
   // reusable workspace for combine-prune operations
   std::vector<Entry> combine_workspace_;
+  // Number of source elements represented by this sketch.
+  size_t num_elements_{0};
 };
 
-[[nodiscard]] inline double SketchEpsilon(bst_bin_t max_bins, std::size_t num_elements) {
-  auto const n = std::max<std::size_t>(1, num_elements);
+[[nodiscard]] inline double SketchEpsilon(bst_bin_t max_bins, std::size_t num_samples) {
+  auto const n = std::max<std::size_t>(1, num_samples);
   auto const n_bins = std::min<std::size_t>(static_cast<std::size_t>(max_bins), n);
-  return 1.0 / (static_cast<double>(n_bins) * WQuantileSketch::kFactor);
+  return 1.0 / static_cast<double>(n_bins);
 }
 
-// Per-feature summary size for a sketch that represents `num_elements`.  `num_elements`
+// Per-feature summary size for a sketch that represents `num_samples`. `num_samples`
 // can be an exact per-feature count or a conservative approximation when a tighter count
 // is not available on the current path.
-[[nodiscard]] inline std::size_t SketchSummaryBudget(bst_bin_t max_bins, std::size_t num_elements) {
-  return WQuantileSketch::LimitSizeLevel(num_elements, SketchEpsilon(max_bins, num_elements));
+[[nodiscard]] inline std::size_t SketchSummaryBudget(bst_bin_t max_bins, std::size_t num_samples) {
+  return WQuantileSketch::LimitSizeLevel(num_samples, SketchEpsilon(max_bins, num_samples));
 }
 
 namespace detail {

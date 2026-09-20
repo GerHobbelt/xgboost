@@ -4,7 +4,6 @@
 import functools
 import importlib.util
 import logging
-import sys
 import types
 from typing import TYPE_CHECKING, Any, Sequence, TypeGuard, cast
 
@@ -15,8 +14,6 @@ from ._typing import _T, DataType
 if TYPE_CHECKING:
     import pandas as pd
     import pyarrow as pa
-
-assert sys.version_info[0] == 3, "Python 2 is no longer supported."
 
 
 def py_str(x: bytes | None) -> str:
@@ -42,11 +39,7 @@ try:
     from sklearn.base import BaseEstimator as XGBModelBase
     from sklearn.base import ClassifierMixin as XGBClassifierBase
     from sklearn.base import RegressorMixin as XGBRegressorBase
-
-    try:
-        from sklearn.model_selection import StratifiedKFold as XGBStratifiedKFold
-    except ImportError:
-        from sklearn.cross_validation import StratifiedKFold as XGBStratifiedKFold
+    from sklearn.model_selection import StratifiedKFold as XGBStratifiedKFold
 
     # sklearn.utils Tags types can be imported unconditionally once
     # xgboost's minimum scikit-learn version is 1.6 or higher
@@ -255,7 +248,7 @@ def concat(value: Sequence[_T]) -> _T:  # pylint: disable=too-many-return-statem
     """Concatenate row-wise."""
     if isinstance(value[0], np.ndarray):
         value_arr = cast(Sequence[np.ndarray], value)
-        return np.concatenate(value_arr, axis=0)
+        return cast(_T, np.concatenate(value_arr, axis=0))
     if scipy_sparse and isinstance(value[0], scipy_sparse.csr_matrix):
         return scipy_sparse.vstack(value, format="csr")
     if scipy_sparse and isinstance(value[0], scipy_sparse.csc_matrix):
