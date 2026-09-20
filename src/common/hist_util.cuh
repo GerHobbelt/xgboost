@@ -278,7 +278,8 @@ inline HistogramCuts DeviceSketch(
 template <typename AdapterBatch>
 void ProcessSlidingWindow(Context const* ctx, AdapterBatch const& batch, MetaInfo const& info,
                           size_t n_features, size_t begin, size_t end, float missing,
-                          SketchContainer* sketch_container, int num_cuts) {
+                          SketchContainer* sketch_container, int num_cuts,
+                          bst_idx_t approx_n_samples) {
   // Copy current subset of valid elements into temporary storage and sort
   dh::device_vector<Entry> sorted_entries;
   dh::caching_device_vector<size_t> column_sizes_scan;
@@ -303,7 +304,7 @@ void ProcessSlidingWindow(Context const* ctx, AdapterBatch const& batch, MetaInf
   auto const& h_cuts_ptr = cuts_ptr.HostVector();
   // Extract the cuts from all columns concurrently
   sketch_container->Push(ctx, dh::ToSpan(sorted_entries), dh::ToSpan(column_sizes_scan), d_cuts_ptr,
-                         h_cuts_ptr.back());
+                         h_cuts_ptr.back(), approx_n_samples);
 
   sorted_entries.clear();
   sorted_entries.shrink_to_fit();
@@ -313,7 +314,7 @@ template <typename Batch>
 void ProcessWeightedSlidingWindow(Context const* ctx, Batch batch, MetaInfo const& info,
                                   int num_cuts_per_feature, bool is_ranking, float missing,
                                   size_t columns, size_t begin, size_t end,
-                                  SketchContainer* sketch_container) {
+                                  SketchContainer* sketch_container, bst_idx_t approx_n_samples) {
   curt::SetDevice(ctx->Ordinal());
   info.weights_.SetDevice(ctx->Device());
   auto weights = info.weights_.ConstDeviceSpan();
@@ -379,7 +380,7 @@ void ProcessWeightedSlidingWindow(Context const* ctx, Batch batch, MetaInfo cons
 
   // Extract cuts
   sketch_container->Push(ctx, dh::ToSpan(sorted_entries), dh::ToSpan(column_sizes_scan), d_cuts_ptr,
-                         h_cuts_ptr.back(), dh::ToSpan(temp_weights));
+                         h_cuts_ptr.back(), approx_n_samples, dh::ToSpan(temp_weights));
   sorted_entries.clear();
   sorted_entries.shrink_to_fit();
 }
@@ -423,7 +424,8 @@ void AdapterDeviceSketch(Context const* ctx, Batch batch, bst_bin_t num_bins, Me
     // approximation here is reasonably accurate. It doesn't hurt accuracy since the
     // estimated n_samples must be greater or equal to the actual n_samples thanks to the
     // dense assumption.
-    auto approx_n_samples = std::max(sketch_batch_num_elements / num_cols, bst_idx_t{1});
+    auto approx_n_samples =
+        std::max(common::DivRoundUp(sketch_batch_num_elements, num_cols), bst_idx_t{1});
     num_cuts_per_feature = detail::RequiredSampleCutsPerColumn(num_bins, approx_n_samples);
     bst_idx_t end =
         std::min(batch.Size(), static_cast<std::size_t>(begin + sketch_batch_num_elements));
@@ -431,10 +433,10 @@ void AdapterDeviceSketch(Context const* ctx, Batch batch, bst_bin_t num_bins, Me
     if (weighted) {
       ProcessWeightedSlidingWindow(ctx, batch, info, num_cuts_per_feature,
                                    HostSketchContainer::UseGroup(info), missing, num_cols, begin,
-                                   end, sketch_container);
+                                   end, sketch_container, approx_n_samples);
     } else {
       ProcessSlidingWindow(ctx, batch, info, num_cols, begin, end, missing, sketch_container,
-                           num_cuts_per_feature);
+                           num_cuts_per_feature, approx_n_samples);
     }
     begin += sketch_batch_num_elements;
   }
