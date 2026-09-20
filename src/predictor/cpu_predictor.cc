@@ -21,6 +21,7 @@
 #include "../data/gradient_index.h"          // for GHistIndexMatrix
 #include "../data/proxy_dmatrix.h"           // for DMatrixProxy
 #include "../gbm/gbtree_model.h"             // for GBTreeModel, GBTreeModelParam
+#include "../tree/sample_position.h"         // for SamplePosition
 #include "array_tree_layout.h"               // for ProcessArrayTree
 #include "data_accessor.h"                   // for GHistIndexMatrixView, SparsePageView
 #include "dmlc/registry.h"                   // for DMLC_REGISTRY_FILE_TAG
@@ -36,7 +37,7 @@
 #include "xgboost/linalg.h"                   // for TensorView, All, VectorView, Tensor
 #include "xgboost/logging.h"                  // for LogCheck_EQ, CHECK_EQ, CHECK, LogCheck_NE
 #include "xgboost/multi_target_tree_model.h"  // for MultiTargetTree
-#include "xgboost/predictor.h"                // for PredictionCacheEntry, Predictor, PredictorReg
+#include "xgboost/predictor.h"                // for Predictor, PredictorReg
 #include "xgboost/span.h"                     // for Span
 #include "xgboost/tree_model.h"               // for RegTree, MTNotImplemented, RTreeNodeStat
 
@@ -455,10 +456,9 @@ class CPUPredictor : public Predictor {
  public:
   explicit CPUPredictor(Context const *ctx) : Predictor::Predictor{ctx} {}
 
-  void PredictBatch(DMatrix *dmat, PredictionCacheEntry *predts, gbm::GBTreeModel const &model,
-                    bst_tree_t tree_begin, bst_tree_t tree_end = 0,
+  void PredictBatch(DMatrix *dmat, HostDeviceVector<float> *out_preds,
+                    gbm::GBTreeModel const &model, bst_tree_t tree_begin, bst_tree_t tree_end = 0,
                     std::vector<float> const *tree_weights_override = nullptr) const override {
-    auto *out_preds = &predts->predictions;
     // This is actually already handled in gbm, but large amount of tests rely on the
     // behaviour.
     if (tree_end == 0) {
@@ -474,7 +474,7 @@ class CPUPredictor : public Predictor {
   }
 
   [[nodiscard]] bool InplacePredict(std::shared_ptr<DMatrix> p_m, gbm::GBTreeModel const &model,
-                                    float missing, PredictionCacheEntry *out_preds,
+                                    float missing, HostDeviceVector<float> *out_preds,
                                     bst_tree_t tree_begin, bst_tree_t tree_end) const override {
     auto proxy = dynamic_cast<data::DMatrixProxy *>(p_m.get());
     CHECK(proxy) << error::InplacePredictProxy();
@@ -482,8 +482,8 @@ class CPUPredictor : public Predictor {
       tree_end = model.trees.size();
     }
 
-    this->InitOutPredictions(p_m->Info(), &(out_preds->predictions), model);
-    auto &predictions = out_preds->predictions.HostVector();
+    this->InitOutPredictions(p_m->Info(), out_preds, model);
+    auto &predictions = out_preds->HostVector();
     bool any_missing = true;
 
     auto const n_threads = this->ctx_->Threads();
@@ -565,6 +565,40 @@ class CPUPredictor : public Predictor {
         });
       });
     });
+  }
+
+  void PredictFromLeafIds(common::Span<HostDeviceVector<bst_node_t> const> leaf_ids,
+                          common::Span<RegTree const *> trees,
+                          linalg::MatrixView<float> out_preds) const override {
+    CHECK_EQ(leaf_ids.size(), trees.size());
+    CHECK(out_preds.Device().IsCPU());
+
+    for (std::size_t tree_idx = 0; tree_idx < trees.size(); ++tree_idx) {
+      auto const *p_tree = trees[tree_idx];
+      CHECK(p_tree);
+      auto const h_leaf_ids = leaf_ids[tree_idx].ConstHostSpan();
+      CHECK_EQ(h_leaf_ids.size(), out_preds.Shape(0));
+
+      if (!p_tree->IsMultiTarget()) {
+        CHECK_EQ(out_preds.Shape(1), 1);
+        auto const tree = p_tree->HostScView();
+        common::ParallelFor(out_preds.Shape(0), ctx_->Threads(), [&](std::size_t row_idx) {
+          auto nidx = tree::SamplePosition::Decode(h_leaf_ids[row_idx]);
+          out_preds(row_idx, 0) += tree.LeafValue(nidx);
+        });
+      } else {
+        auto const tree = p_tree->HostMtView();
+        auto n_targets = tree.NumTargets();
+        CHECK_EQ(out_preds.Shape(1), n_targets);
+        common::ParallelFor(out_preds.Shape(0), ctx_->Threads(), [&](std::size_t row_idx) {
+          auto nidx = tree::SamplePosition::Decode(h_leaf_ids[row_idx]);
+          auto weight = tree.LeafValue(nidx);
+          for (bst_target_t target_idx = 0; target_idx < n_targets; ++target_idx) {
+            out_preds(row_idx, target_idx) += weight(target_idx);
+          }
+        });
+      }
+    }
   }
 
   void PredictContribution(DMatrix *p_fmat, HostDeviceVector<float> *out_contribs,

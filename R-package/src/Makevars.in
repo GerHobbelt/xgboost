@@ -46,12 +46,19 @@ OBJECTS= \
     $(PKGROOT)/src/metric/auc.o \
     $(PKGROOT)/src/metric/survival_metric.o \
     $(PKGROOT)/src/objective/objective.o \
+    $(PKGROOT)/src/objective/absolute_error_obj.o \
     $(PKGROOT)/src/objective/regression_obj.o \
     $(PKGROOT)/src/objective/multiclass_obj.o \
     $(PKGROOT)/src/objective/lambdarank_obj.o \
+    $(PKGROOT)/src/objective/gamma_obj.o \
     $(PKGROOT)/src/objective/hinge.o \
+    $(PKGROOT)/src/objective/logistic_obj.o \
+    $(PKGROOT)/src/objective/poisson_obj.o \
+    $(PKGROOT)/src/objective/pseudohuber_obj.o \
+    $(PKGROOT)/src/objective/squared_error_obj.o \
+    $(PKGROOT)/src/objective/squared_log_obj.o \
+    $(PKGROOT)/src/objective/tweedie_obj.o \
     $(PKGROOT)/src/objective/aft_obj.o \
-    $(PKGROOT)/src/objective/adaptive.o \
     $(PKGROOT)/src/objective/init_estimation.o \
     $(PKGROOT)/src/objective/quantile_obj.o \
     $(PKGROOT)/src/gbm/gbm.o \
@@ -111,7 +118,6 @@ OBJECTS= \
     $(PKGROOT)/src/collective/comm_group.o \
     $(PKGROOT)/src/collective/coll.o \
     $(PKGROOT)/src/collective/tracker.o \
-    $(PKGROOT)/src/collective/in_memory_handler.o \
     $(PKGROOT)/src/collective/loop.o \
     $(PKGROOT)/src/collective/socket.o \
     $(PKGROOT)/src/common/cache_manager.o \
