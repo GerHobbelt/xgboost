@@ -81,6 +81,7 @@ bool UpdatersMatched(std::vector<std::string> updater_seq,
                       return name == up->Name();
                     });
 }
+
 }  // namespace
 
 void GBTree::Configure(Args const& cfg) {
@@ -205,9 +206,6 @@ void GBTree::UpdateTreeLeaf(DMatrix const* p_fmat, HostDeviceVector<float> const
                             std::vector<HostDeviceVector<bst_node_t>> const& node_position,
                             TreesOneGroup* p_trees) {
   CHECK(!updaters_.empty());
-  if (!updaters_.back()->HasNodePosition()) {
-    return;
-  }
   if (!obj || !obj->Task().UpdateTreeLeaf()) {
     return;
   }
@@ -231,6 +229,8 @@ void GBTree::DoBoost(DMatrix* p_fmat, GradientContainer* in_gpair, PredictionCac
   if (in_gpair->HasValueGrad()) {
     CHECK(model_.learner_model_param->IsVectorLeaf())
         << "Reduced gradient must be used with vector leaf trees";
+    CHECK(!tree_param_.HasMonotone())
+        << "Monotonic constraints are not supported with reduced gradients.";
   }
 
   TreesOneIter new_trees;
@@ -365,7 +365,6 @@ void GBTree::BoostNewTrees(GradientContainer* gpair, DMatrix* p_fmat, int bst_gr
     if (!gpair->HasValueGrad()) {
       CHECK_EQ(gpair->gpair.Size(), n_out) << msg;
     }
-    CHECK(!dparam_.HasDropout()) << "dart" << MTNotImplemented();
   }
 
   out_position->resize(new_trees.size());
@@ -572,9 +571,10 @@ std::vector<float> GBTree::DropTrees(bool is_training) {
   return dropped_weights;
 }
 
-std::size_t GBTree::NormalizeTrees(size_t size_new_trees) {
+[[nodiscard]] std::size_t GBTree::NormalizeTrees(std::size_t size_new_trees) {
   CHECK(tree_param_.GetInitialised());
-  float lr = 1.0 * tree_param_.learning_rate / size_new_trees;
+  // Parallel trees each use eta / num_parallel_tree, so the complete layer uses eta.
+  auto lr = tree_param_.learning_rate;
   size_t num_drop = idx_drop_.size();
   if (num_drop == 0) {
     for (size_t i = 0; i < size_new_trees; ++i) {

@@ -116,6 +116,7 @@ Parameters for Tree Booster
 * ``min_child_weight`` [default=1]
 
   - Minimum sum of instance weight (hessian) needed in a child. If the tree partition step results in a leaf node with the sum of instance weight less than ``min_child_weight``, then the building process will give up further partitioning. In linear regression task, this simply corresponds to minimum number of instances needed to be in each node. The larger ``min_child_weight`` is, the more conservative the algorithm will be.
+  - With vector leaf, the mean Hessian across targets is used to compare against the ``min_child_weight``.
   - range: [0,∞]
 
 * ``max_delta_step`` [default=0]
@@ -202,7 +203,6 @@ Parameters for Tree Booster
     - ``grow_quantile_histmaker``: Grow tree using quantized histogram.
     - ``grow_gpu_hist``:  Enabled when ``tree_method`` is set to ``hist`` along with ``device=cuda``.
     - ``grow_gpu_approx``: Enabled when ``tree_method`` is set to ``approx`` along with ``device=cuda``.
-    - ``sync``: synchronizes trees in all distributed nodes.
     - ``refresh``: refreshes tree's statistics and/or leaf values based on the current data. Note that no random subsampling of data rows is performed.
     - ``prune``: prunes the splits where loss < min_split_loss (or gamma) and nodes that have depth greater than ``max_depth``.
 
@@ -398,7 +398,7 @@ Specify the learning task and the corresponding learning objective. The objectiv
   - ``reg:squaredlogerror``: regression with squared log loss :math:`\frac{1}{2}[log(pred + 1) - log(label + 1)]^2`.  All input labels are required to be greater than -1.  Also, see metric ``rmsle`` for possible issue  with this objective.
   - ``reg:logistic``: logistic regression, output probability
   - ``reg:pseudohubererror``: regression with Pseudo Huber loss, a twice differentiable alternative to absolute loss.
-  - ``reg:absoluteerror``: Regression with L1 error. When tree model is used, leaf value is refreshed after tree construction. If used in distributed training, the leaf value is calculated as the mean value from all workers, which is not guaranteed to be optimal.
+  - ``reg:absoluteerror``: Regression with L1 error. A smooth approximation is used to optimize the L1 loss.
 
     .. versionadded:: 1.7.0
 

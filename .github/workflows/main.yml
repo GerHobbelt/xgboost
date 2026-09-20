@@ -53,7 +53,7 @@ jobs:
         password: ${{ needs.ci-configure.outputs.docker_password }}
       options: ${{ matrix.container_options }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           submodules: "true"
       # Remove default build config to ensure CMake-configured header is used
@@ -72,6 +72,14 @@ jobs:
           cache-key-prefix: ${{ github.job }}-${{ matrix.build_suite }}
       - name: Build and test
         run: bash ops/pipeline/build-cpu.sh ${{ matrix.build_suite }}
+      - name: Test federated learning on CPU
+        if: matrix.variant == 'default'
+        shell: bash -l {0}
+        run: |
+          source activate linux_cpu_test
+          conda install scikit-build-core -y
+          cd python-package && pip install -e . --no-deps --no-build-isolation && cd -
+          timeout 600s pytest -v -s -rxXs --durations=0 tests/test_distributed/test_federated
       - run: sccache --show-stats
 
   build-cuda:
@@ -92,26 +100,22 @@ jobs:
           runner: linux-arm64-cpu
           image_repo: xgb-ci.gpu_build_rockylinux8_aarch64
           use_rmm: 0
-          use_federated: 1
         - cuda_version: 12
           arch: x86_64
           runner: linux-amd64-cpu
           image_repo: xgb-ci.gpu_build_rockylinux8
           use_rmm: 0
-          use_federated: 1
         # CUDA 13
         - cuda_version: 13
           arch: aarch64
           runner: linux-arm64-cpu
           image_repo: xgb-ci.gpu_build_cuda13_rockylinux8_aarch64
           use_rmm: 0
-          use_federated: 0
         - cuda_version: 13
           arch: x86_64
           runner: linux-amd64-cpu
           image_repo: xgb-ci.gpu_build_cuda13_rockylinux8
           use_rmm: 0
-          use_federated: 0
     container:
       image: ${{ needs.ci-configure.outputs.docker_registry }}/${{ matrix.image_repo }}:${{ needs.ci-configure.outputs.image_tag }}
       credentials:
@@ -119,7 +123,7 @@ jobs:
         password: ${{ needs.ci-configure.outputs.docker_password }}
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           submodules: "true"
       - uses: dmlc/xgboost-devops/actions/sccache@main
@@ -129,7 +133,6 @@ jobs:
           bash ops/pipeline/build-cuda.sh
           --cuda-version ${{ matrix.cuda_version }}
           --use-rmm ${{ matrix.use_rmm }}
-          --use-federated ${{ matrix.use_federated }}
       - run: sccache --show-stats
       - name: Stash files
         run: |
@@ -153,7 +156,7 @@ jobs:
         password: ${{ needs.ci-configure.outputs.docker_password }}
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           submodules: "true"
       - uses: dmlc/xgboost-devops/actions/sccache@main
@@ -197,7 +200,7 @@ jobs:
         username: ${{ needs.ci-configure.outputs.docker_username }}
         password: ${{ needs.ci-configure.outputs.docker_password }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - name: Pick Python
         run: |
           export PATH=/opt/python/cp312-cp312/bin/:$PATH
@@ -236,7 +239,7 @@ jobs:
         password: ${{ needs.ci-configure.outputs.docker_password }}
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           submodules: "true"
       - uses: dmlc/xgboost-devops/actions/sccache@main
@@ -244,7 +247,6 @@ jobs:
           bash ops/pipeline/build-cuda.sh
           --cuda-version 12
           --use-rmm 1
-          --use-federated 1
       - run: sccache --show-stats
       - name: Stash files
         run: |
@@ -271,7 +273,7 @@ jobs:
           arch: x86_64
           runner: linux-amd64-cpu
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           submodules: "true"
       - name: Log into Docker registry (AWS ECR)
@@ -298,7 +300,7 @@ jobs:
       - name: Trust git cloning project sources
         run: |
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           submodules: "true"
       - uses: dmlc/xgboost-devops/actions/sccache@main
@@ -389,7 +391,7 @@ jobs:
       options: ${{ matrix.container_options }}
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - name: Unstash gtest
         run: |
           python3 ops/pipeline/manage-artifacts.py download \
@@ -461,7 +463,7 @@ jobs:
       options: ${{ matrix.container_options }}
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - name: Unstash Python wheel
         run: |
           python3 ops/pipeline/manage-artifacts.py download \
@@ -526,7 +528,7 @@ jobs:
       options: ${{ matrix.container_options }}
     steps:
       - uses: runs-on/action@v2
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - name: Unstash Python wheel
         run: |
           python3 ops/pipeline/manage-artifacts.py download \
@@ -552,11 +554,11 @@ jobs:
         - os: macos-14
           platform_id: macosx_arm64
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           submodules: 'true'
       - name: Set up homebrew
-        uses: Homebrew/actions/setup-homebrew@18fcb8e3e06b4247c676c506750dc95ea7226479
+        uses: Homebrew/actions/setup-homebrew@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef
       - name: Install libomp
         run: brew install libomp
       - uses: dmlc/xgboost-devops/actions/miniforge-setup@main
@@ -601,7 +603,7 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       - uses: dmlc/xgboost-devops/actions/miniforge-setup@main
         with:
           environment-name: macos_test
