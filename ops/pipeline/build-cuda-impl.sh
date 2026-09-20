@@ -41,7 +41,6 @@ cmake .. \
   -DUSE_OPENMP=ON \
   -DHIDE_CXX_SYMBOLS=ON \
   -DUSE_NCCL=ON \
-  -DUSE_NCCL_LIB_PATH=ON \
   -DNCCL_INCLUDE_DIR=/usr/include \
   -DUSE_DLOPEN_NCCL=ON \
   -DGOOGLE_TEST=ON \
@@ -53,6 +52,7 @@ time ninja -v
 popd
 
 echo "--- Build binary wheel"
+python3 ops/script/pypi_variants.py --use-suffix=na --require-nccl-dep=cu12
 pushd python-package
 rm -rfv dist/*
 pip wheel --no-deps -v . --wheel-dir dist/

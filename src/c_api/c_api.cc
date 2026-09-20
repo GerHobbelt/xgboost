@@ -264,20 +264,6 @@ XGB_DLL int XGBGetGlobalConfig(const char **json_str) {
   API_END();
 }
 
-XGB_DLL int XGDMatrixCreateFromFile(const char *fname, int silent, DMatrixHandle *out) {
-  xgboost_CHECK_C_ARG_PTR(fname);
-  xgboost_CHECK_C_ARG_PTR(out);
-
-  LOG(WARNING) << error::DeprecatedFunc(__func__, "2.0.0", "XGDMatrixCreateFromURI");
-
-  Json config{Object()};
-  config["uri"] = std::string{fname};
-  config["silent"] = silent;
-  std::string config_str;
-  Json::Dump(config, &config_str);
-  return XGDMatrixCreateFromURI(config_str.c_str(), out);
-}
-
 XGB_DLL int XGDMatrixCreateFromURI(const char *config, DMatrixHandle *out) {
   API_BEGIN();
   xgboost_CHECK_C_ARG_PTR(config);
@@ -1248,6 +1234,8 @@ XGB_DLL int XGBoosterTrainOneIterWithSplitGrad(BoosterHandle handle, DMatrixHand
   }
 
   auto p_fmat = CastDMatrixHandle(dtrain);
+  CHECK_EQ(gpair.gpair.Shape(0), p_fmat->Info().num_row_);
+  CHECK_EQ(gpair.value_gpair.Shape(0), p_fmat->Info().num_row_);
   learner->BoostOneIter(iter, p_fmat, &gpair);
 
   API_END();
@@ -1288,7 +1276,7 @@ XGB_DLL int XGBoosterPredict(BoosterHandle handle, DMatrixHandle dmat, int optio
   learner->Predict(*static_cast<std::shared_ptr<DMatrix> *>(dmat), (option_mask & 1) != 0,
                    &entry.predictions, 0, iteration_end, static_cast<bool>(training),
                    (option_mask & 2) != 0, (option_mask & 4) != 0, (option_mask & 8) != 0,
-                   (option_mask & 16) != 0);
+                   (option_mask & 16) != 0, false);
 
   xgboost_CHECK_C_ARG_PTR(len);
   xgboost_CHECK_C_ARG_PTR(out_result);
@@ -1337,25 +1325,24 @@ XGB_DLL int XGBoosterPredictFromDMatrix(BoosterHandle handle, DMatrixHandle dmat
   bool interactions =
       type == PredictionType::kInteraction || type == PredictionType::kApproxInteraction;
   bool training = RequiredArg<Boolean>(config, "training", __func__);
+  bool strict_shape = RequiredArg<Boolean>(config, "strict_shape", __func__);
   learner->Predict(p_m, type == PredictionType::kMargin, &entry.predictions, iteration_begin,
                    iteration_end, training, type == PredictionType::kLeaf, contribs, approximate,
-                   interactions);
+                   interactions, strict_shape);
 
   xgboost_CHECK_C_ARG_PTR(out_result);
   *out_result = dmlc::BeginPtr(entry.predictions.ConstHostVector());
 
   auto &shape = learner->GetThreadLocal().prediction_shape;
   auto chunksize = p_m->Info().num_row_ == 0 ? 0 : entry.predictions.Size() / p_m->Info().num_row_;
-  auto rounds = iteration_end - iteration_begin;
-  rounds = rounds == 0 ? learner->BoostedRounds() : rounds;
-  // Determine shape
-  bool strict_shape = RequiredArg<Boolean>(config, "strict_shape", __func__);
+  auto n_rounds = iteration_end - iteration_begin;
+  n_rounds = n_rounds == 0 ? learner->BoostedRounds() : n_rounds;
 
   xgboost_CHECK_C_ARG_PTR(out_dim);
   xgboost_CHECK_C_ARG_PTR(out_shape);
 
   CalcPredictShape(strict_shape, type, p_m->Info().num_row_, p_m->Info().num_col_, chunksize,
-                   learner->Groups(), rounds, &shape, out_dim);
+                   learner->Groups(), n_rounds, &shape, out_dim);
   *out_shape = dmlc::BeginPtr(shape);
   API_END();
 }

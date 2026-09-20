@@ -187,6 +187,7 @@ __global__ void PredictLeafKernel(Data data, common::Span<TreeViewVar const> d_t
     return;
   }
   Loader loader{std::move(data), use_shared, num_features, n_rows, missing, std::move(acc)};
+  auto const n_trees = tree_end - tree_begin;
   for (bst_tree_t tree_idx = tree_begin; tree_idx < tree_end; ++tree_idx) {
     auto const& d_tree = d_trees[tree_idx - tree_begin];
     cuda::std::visit(
@@ -197,7 +198,7 @@ __global__ void PredictLeafKernel(Data data, common::Span<TreeViewVar const> d_t
           } else {
             leaf = GetLeafIndex<has_missing, false>(ridx, tree, &loader);
           }
-          d_out_predictions[ridx * (tree_end - tree_begin) + tree_idx] = leaf;
+          d_out_predictions[ridx * n_trees + tree_idx - tree_begin] = leaf;
         },
         d_tree);
   }
@@ -669,7 +670,7 @@ class GPUPredictor : public xgboost::Predictor {
 
   void PredictBatch(DMatrix* dmat, PredictionCacheEntry* predts, const gbm::GBTreeModel& model,
                     bst_tree_t tree_begin, bst_tree_t tree_end = 0,
-                    std::vector<float> const* tree_weights = nullptr) const override {
+                    std::vector<float> const* tree_weights_override = nullptr) const override {
     xgboost_NVTX_FN_RANGE();
     CHECK(ctx_->Device().IsCUDA()) << "Set `device' to `cuda` for processing GPU data.";
     auto* out_preds = &predts->predictions;
@@ -678,6 +679,8 @@ class GPUPredictor : public xgboost::Predictor {
     }
     HostDeviceVector<float> weights;
     auto pred_weights = common::OptionalWeights{1.0f};
+    auto const* tree_weights =
+        tree_weights_override == nullptr ? model.TreeWeights() : tree_weights_override;
     if (tree_weights != nullptr) {
       weights.SetDevice(ctx_->Device());
       weights.HostVector().assign(tree_weights->cbegin() + tree_begin,
@@ -733,8 +736,7 @@ class GPUPredictor : public xgboost::Predictor {
 
   [[nodiscard]] bool InplacePredict(std::shared_ptr<DMatrix> p_m, gbm::GBTreeModel const& model,
                                     float missing, PredictionCacheEntry* out_preds,
-                                    bst_tree_t tree_begin, bst_tree_t tree_end,
-                                    std::vector<float> const* tree_weights) const override {
+                                    bst_tree_t tree_begin, bst_tree_t tree_end) const override {
     xgboost_NVTX_FN_RANGE();
     auto proxy = dynamic_cast<data::DMatrixProxy*>(p_m.get());
     CHECK(proxy) << error::InplacePredictProxy();
@@ -743,6 +745,7 @@ class GPUPredictor : public xgboost::Predictor {
     }
     HostDeviceVector<float> weights;
     auto pred_weights = common::OptionalWeights{1.0f};
+    auto const* tree_weights = model.TreeWeights();
     if (tree_weights != nullptr) {
       weights.SetDevice(ctx_->Device());
       weights.HostVector().assign(tree_weights->cbegin() + tree_begin,
@@ -762,9 +765,9 @@ class GPUPredictor : public xgboost::Predictor {
   }
 
   void PredictContribution(DMatrix* p_fmat, HostDeviceVector<float>* out_contribs,
-                           const gbm::GBTreeModel& model, bst_tree_t tree_end,
-                           std::vector<float> const* tree_weights, bool approximate, int,
-                           unsigned) const override {
+                           const gbm::GBTreeModel& model, bst_tree_t tree_end, bool approximate,
+                           int, unsigned) const override {
+    auto const* tree_weights = model.TreeWeights();
     xgboost_NVTX_FN_RANGE();
     if (approximate) {
       LOG(FATAL) << "Approximated contribution is not implemented in the GPU predictor, use CPU "
@@ -775,9 +778,10 @@ class GPUPredictor : public xgboost::Predictor {
 
   void PredictInteractionContributions(DMatrix* p_fmat, HostDeviceVector<float>* out_contribs,
                                        gbm::GBTreeModel const& model, bst_tree_t tree_end,
-                                       std::vector<float> const* tree_weights,
                                        bool approximate) const override {
     xgboost_NVTX_FN_RANGE();
+    auto const* tree_weights = model.TreeWeights();
+
     if (approximate) {
       LOG(FATAL) << "Approximated contribution is not implemented in GPU predictor, use cpu "
                     "instead.";
@@ -810,6 +814,7 @@ class GPUPredictor : public xgboost::Predictor {
 
     LaunchPredict(ctx_, p_fmat->IsDense(), new_enc, model, [&](auto&& cfg, auto&& acc) {
       bst_idx_t batch_offset = 0;
+      auto const n_trees = d_model.Trees().size();
       cfg.ForEachBatch(p_fmat, [&](auto&& loader_t, auto&& batch) {
         using Loader = typename common::GetValueT<decltype(loader_t)>;
         using Config = common::GetValueT<decltype(cfg)>;
@@ -822,7 +827,7 @@ class GPUPredictor : public xgboost::Predictor {
                                     cfg.UseShared(), std::numeric_limits<float>::quiet_NaN(),
                                     std::forward<typename Config::EncAccessorT>(acc));
 
-        batch_offset += n_rows;
+        batch_offset += n_rows * n_trees;
       });
     });
   }

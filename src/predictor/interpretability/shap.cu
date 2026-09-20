@@ -69,7 +69,7 @@ constexpr int kGpuQuadratureWarpsPerBlock = kGpuQuadratureTreeBlockThreads / dh:
 // The traversal stack lives in shared memory and is sized at compile time. Group trees by depth so
 // shallow models use smaller stack/basis arrays, while deeper trees still get a bounded fallback
 // specialization instead of forcing every model through the largest shared-memory footprint.
-constexpr std::array<std::size_t, 3> kGpuQuadratureDepthBuckets{{16, 32, 64}};
+constexpr std::array<std::size_t, 4> kGpuQuadratureDepthBuckets{{16, 32, 64, 128}};
 constexpr std::size_t kMaxGpuQuadratureDepth = kGpuQuadratureDepthBuckets.back();
 using QuadratureRule = detail::QuadratureRule;
 // Leaf payload is interpreted by CompressedTree::is_vector_leaf: scalar trees keep the weighted
@@ -273,8 +273,8 @@ CompressedModel CompressTreeBucket(gbm::GBTreeModel const& model,
   return out;
 }
 
-GpuQuadratureModelData PrepareGpuQuadratureModel(Context const* ctx, gbm::GBTreeModel const& model,
-                                                 bst_tree_t tree_end, bst_target_t n_groups,
+GpuQuadratureModelData PrepareGpuQuadratureModel(gbm::GBTreeModel const& model, bst_tree_t tree_end,
+                                                 bst_target_t n_groups,
                                                  std::vector<float> const* tree_weights,
                                                  char const* prediction_kind) {
   if (tree_weights != nullptr) {
@@ -1257,7 +1257,7 @@ void ShapValues(Context const* ctx, DMatrix* p_fmat, HostDeviceVector<float>* ou
   out_contribs->Fill(0.0f);
 
   auto prepared =
-      PrepareGpuQuadratureModel(ctx, model, tree_end, ngroup, tree_weights, "Predict contribution");
+      PrepareGpuQuadratureModel(model, tree_end, ngroup, tree_weights, "Predict contribution");
 
   auto new_enc =
       p_fmat->Cats()->NeedRecode() ? p_fmat->Cats()->DeviceView(ctx) : enc::DeviceColumnsView{};
@@ -1270,6 +1270,8 @@ void ShapValues(Context const* ctx, DMatrix* p_fmat, HostDeviceVector<float>* ou
                                     prepared.compressed[1], prepared.rule, out_contribs);
     LaunchQuadratureShapBuckets<64>(ctx, loader, base_rowid, ngroup, ncolumns,
                                     prepared.compressed[2], prepared.rule, out_contribs);
+    LaunchQuadratureShapBuckets<128>(ctx, loader, base_rowid, ngroup, ncolumns,
+                                     prepared.compressed[3], prepared.rule, out_contribs);
   });
 
   p_fmat->Info().base_margin_.SetDevice(ctx->Device());
@@ -1304,7 +1306,7 @@ void ShapInteractionValues(Context const* ctx, DMatrix* p_fmat,
   out_contribs->Resize(p_fmat->Info().num_row_ * dim_size);
   out_contribs->Fill(0.0f);
 
-  auto prepared = PrepareGpuQuadratureModel(ctx, model, tree_end, ngroup, tree_weights,
+  auto prepared = PrepareGpuQuadratureModel(model, tree_end, ngroup, tree_weights,
                                             "Predict interaction contribution");
 
   auto new_enc =
@@ -1318,6 +1320,9 @@ void ShapInteractionValues(Context const* ctx, DMatrix* p_fmat,
                                                prepared.compressed[1], prepared.rule, out_contribs);
     LaunchQuadratureShapInteractionBuckets<64>(ctx, loader, base_rowid, ngroup, ncolumns,
                                                prepared.compressed[2], prepared.rule, out_contribs);
+    LaunchQuadratureShapInteractionBuckets<128>(ctx, loader, base_rowid, ngroup, ncolumns,
+                                                prepared.compressed[3], prepared.rule,
+                                                out_contribs);
   });
 
   p_fmat->Info().base_margin_.SetDevice(ctx->Device());

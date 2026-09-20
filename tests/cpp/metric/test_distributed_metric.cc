@@ -135,9 +135,11 @@ auto MakeParamsForTest() {
   // AUC
   REFLECT_NAME(BinaryAUC);
   REFLECT_NAME(MultiClassAUC);
+  REFLECT_NAME(MultiLabelAUC);
   REFLECT_NAME(RankingAUC);
   REFLECT_NAME(PRAUC);
   REFLECT_NAME(MultiClassPRAUC);
+  REFLECT_NAME(MultiLabelPRAUC);
   REFLECT_NAME(RankingPRAUC);
   // Elementwise
   REFLECT_NAME(RMSE);
@@ -190,4 +192,35 @@ INSTANTIATE_TEST_SUITE_P(
       result += info.param.name;
       return result;
     });
+
+TEST(Metric, ExpectileLoadConfig) {
+  auto ctx = MakeCUDACtx(GPUIDX);
+  std::unique_ptr<xgboost::Metric> metric{xgboost::Metric::Create("expectile", &ctx)};
+  metric->Configure({{"expectile_alpha", "0.8"}});
+  Json config{Object{}};
+  metric->SaveConfig(&config);
+
+  std::unique_ptr<xgboost::Metric> loaded{xgboost::Metric::Create("expectile", &ctx)};
+  loaded->LoadConfig(config);
+
+  xgboost::HostDeviceVector<float> preds;
+  preds.HostVector() = {0.1f, 0.9f};
+  auto result = GetMetricEval(loaded.get(), preds, {0.0f, 1.0f}, {}, {}, DataSplitMode::kRow);
+  // alpha=0.8, diffs {0.1, -0.1} => losses {0.2*0.01, 0.8*0.01} -> mean 0.005.
+  EXPECT_NEAR(result, 0.005f, 1e-6f);
+}
+
+TEST(AUC, MultiLabelEmptyWorker) {
+  collective::TestDistributedGlobal(2, [] {
+    VerifyMultiLabelAUCEmptyWorker("auc", DeviceOrd::CPU());
+    VerifyMultiLabelAUCEmptyWorker("aucpr", DeviceOrd::CPU());
+  });
+  if (UseCUDA() && UseNCCL() && curt::AllVisibleGPUs() >= 2) {
+    collective::TestDistributedGlobal(2, [] {
+      auto device = DeviceOrd::CUDA(collective::GetRank());
+      VerifyMultiLabelAUCEmptyWorker("auc", device);
+      VerifyMultiLabelAUCEmptyWorker("aucpr", device);
+    });
+  }
+}
 }  // namespace xgboost::metric

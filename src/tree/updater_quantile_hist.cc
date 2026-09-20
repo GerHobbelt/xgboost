@@ -315,6 +315,8 @@ class MultiTargetHistBuilder {
    * calculated from value gradient.
    */
   void ExpandTreeLeaf(linalg::Matrix<GradientPair> const &full_grad, RegTree *p_tree) {
+    CHECK(p_last_fmat_);
+    CHECK_EQ(full_grad.Shape(1), p_tree->NumTargets());
     auto tree = p_tree->HostMtView();
     auto n_targets = p_tree->NumTargets();
     auto value_gpair = full_grad.HostView();
@@ -364,6 +366,12 @@ class MultiTargetHistBuilder {
     // Reduce thread-local sums: [n_threads, n_leaves, n_targets] -> [n_leaves, n_targets]
     auto leaf_sums = ReduceToRows(ctx_, h_leaf_sums_tloc);
     auto h_leaf_sums = leaf_sums.HostView();
+    CHECK(h_leaf_sums.CContiguous());
+    auto rc = collective::GlobalSum(
+        ctx_, p_last_fmat_->Info(),
+        linalg::MakeVec(reinterpret_cast<double *>(h_leaf_sums.Values().data()),
+                        h_leaf_sums.Size() * 2));
+    collective::SafeColl(rc);
 
     // Calculate weights for each leaf
     linalg::Matrix<float> weights = linalg::Empty<float>(ctx_, n_leaves, n_targets);
@@ -626,9 +634,6 @@ class QuantileHistMaker : public TreeUpdater {
       if (!param->monotone_constraints.empty()) {
         LOG(FATAL) << "Monotonic constraint" << MTNotImplemented();
       }
-      if (!param->interaction_constraints.empty()) {
-        LOG(FATAL) << "Interaction constraint" << MTNotImplemented();
-      }
       if (!p_mtimpl_) {
         this->p_mtimpl_ = std::make_unique<MultiTargetHistBuilder>(ctx_, param, &hist_param_,
                                                                    column_sampler_, &monitor_);
@@ -648,7 +653,7 @@ class QuantileHistMaker : public TreeUpdater {
     linalg::Matrix<GradientPair> sample_out;
     auto h_sample_out = h_gpair;
     auto need_copy = [&] {
-      return trees.size() > 1 || n_targets > 1;
+      return trees.size() > 1 || n_targets > 1 || in_gpair->HasValueGrad();
     };
     if (need_copy()) {
       // allocate buffer
@@ -668,14 +673,14 @@ class QuantileHistMaker : public TreeUpdater {
         UpdateTree<MultiExpandEntry>(&monitor_, h_sample_out, p_mtimpl_.get(), p_fmat, param,
                                      h_out_position, *tree_it);
         if (in_gpair->HasValueGrad()) {
-          // Copy the value gradient and apply sampling mask from split gradient
+          // Copy the value gradient and replay sampling from the original split gradient.
           auto value_grad = linalg::Empty<GradientPair>(ctx_, in_gpair->value_gpair.Shape(0),
                                                         in_gpair->value_gpair.Shape(1));
           auto h_value_grad = value_grad.HostView();
           auto h_value_grad_in = in_gpair->value_gpair.HostView();
           std::copy(linalg::cbegin(h_value_grad_in), linalg::cend(h_value_grad_in),
                     linalg::begin(h_value_grad));
-          sampler.ApplySampling(ctx_, h_sample_out, &value_grad);
+          sampler.ApplySampling(ctx_, h_gpair, &value_grad);
           // Refresh the leaf weights.
           p_mtimpl_->ExpandTreeLeaf(value_grad, *tree_it);
         } else {
